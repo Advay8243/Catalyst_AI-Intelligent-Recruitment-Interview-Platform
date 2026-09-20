@@ -1,0 +1,247 @@
+"use client";
+
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Filter,
+  Mail,
+  Phone,
+  Plus,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  Upload,
+  X,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ScoreDrawer, ScorePill } from "@/components/candidate-panels";
+import { UploadDialog } from "@/components/upload-dialog";
+import { Badge, Button, Input, Skeleton } from "@/components/ui";
+import { getCandidates, getJobs } from "@/lib/api";
+import type { Candidate, CandidateQuery, Job } from "@/lib/types";
+import { initials } from "@/lib/utils";
+
+const PAGE_SIZE = 10;
+
+type Notice = { message: string; error?: boolean };
+
+export function ScreeningClient() {
+  const router = useRouter();
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [jobId, setJobId] = useState("");
+  const [status, setStatus] = useState("");
+  const [minScore, setMinScore] = useState("");
+  const [sortBy, setSortBy] = useState("jdScore");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Candidate | null>(null);
+  const [drawer, setDrawer] = useState<"jd" | "hr" | null>(null);
+  const [uploadKind, setUploadKind] = useState<"jd" | "resume" | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
+    getJobs()
+      .then((items) => {
+        setJobs(items);
+        setJobId((current) => current || items[0]?.id || "");
+      })
+      .catch(() => setJobs([]));
+  }, []);
+
+  const query = useMemo<CandidateQuery>(() => ({
+    page,
+    pageSize: PAGE_SIZE,
+    search,
+    jobId,
+    status,
+    minScore,
+    sortBy,
+    sortOrder,
+  }), [page, search, jobId, status, minScore, sortBy, sortOrder]);
+
+  const loadCandidates = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await getCandidates(query);
+      setCandidates(result.items);
+      setTotal(result.total);
+    } catch (caught) {
+      setCandidates([]);
+      setTotal(0);
+      setError(caught instanceof Error ? caught.message : "Could not load candidates.");
+    } finally {
+      setLoading(false);
+    }
+  }, [query]);
+
+  useEffect(() => {
+    void loadCandidates();
+  }, [loadCandidates, refreshKey]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const activeFilters = [status, minScore].filter(Boolean).length;
+  const showNotice = (message: string, noticeError = false) => setNotice({ message, error: noticeError });
+  const openDrawer = (candidate: Candidate, panel: "jd" | "hr") => {
+    setSelected(candidate);
+    setDrawer(panel);
+  };
+
+  return (
+    <div className="min-h-screen">
+      <header className="border-b bg-white px-5 py-5 sm:px-8 lg:px-10">
+        <div className="mx-auto flex max-w-[1500px] flex-col gap-4 pl-12 sm:pl-0 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-xs font-medium text-[#98a2b3]"><span>Recruitment</span><span>/</span><span className="text-[#667085]">Candidate Screening</span></div>
+            <h1 className="text-2xl font-bold tracking-tight text-[#101828]">Candidate Screening</h1>
+            <p className="mt-1 text-sm text-[#667085]">Review AI-assisted matches and move the best candidates forward.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setUploadKind("jd")}><FileText className="size-4" />Upload / paste JD</Button>
+            <Button onClick={() => setUploadKind("resume")}><Upload className="size-4" />Upload resumes</Button>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-[1500px] space-y-5 p-5 sm:p-8 lg:p-10">
+        <section className="rounded-xl border bg-white p-4 shadow-panel">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+            <label className="relative min-w-0 flex-1 xl:max-w-md">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#98a2b3]" />
+              <Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search candidates by name or email…" aria-label="Search candidates" className="pl-9 pr-9" />
+              {searchInput && <button aria-label="Clear search" onClick={() => setSearchInput("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#98a2b3]"><X className="size-4" /></button>}
+            </label>
+            <select aria-label="Select job" value={jobId} onChange={(event) => { setJobId(event.target.value); setPage(1); }} className="h-10 min-w-48 rounded-lg border bg-white px-3 text-sm text-[#344054] shadow-sm">
+              <option value="">All jobs</option>
+              {jobs.map((job) => <option value={job.id} key={job.id}>{job.title}</option>)}
+            </select>
+            <div className="flex flex-1 flex-wrap gap-2 xl:justify-end">
+              <div className="relative">
+                <Filter className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#667085]" />
+                <select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="h-10 appearance-none rounded-lg border bg-white pl-9 pr-8 text-sm shadow-sm">
+                  <option value="">All statuses</option><option value="new">Awaiting decision</option><option value="ADVANCED">Advanced</option><option value="REJECTED">Rejected</option>
+                </select>
+              </div>
+              <div className="relative">
+                <SlidersHorizontal className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#667085]" />
+                <select aria-label="Minimum score" value={minScore} onChange={(event) => { setMinScore(event.target.value); setPage(1); }} className="h-10 appearance-none rounded-lg border bg-white pl-9 pr-8 text-sm shadow-sm">
+                  <option value="">Any score</option><option value="80">80% and above</option><option value="60">60% and above</option><option value="40">40% and above</option>
+                </select>
+              </div>
+              <select aria-label="Sort candidates" value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1); }} className="h-10 rounded-lg border bg-white px-3 text-sm shadow-sm">
+                <option value="jdScore">Sort: JD score</option><option value="hrScore">Sort: HR score</option><option value="name">Sort: Name</option><option value="createdAt">Sort: Newest</option>
+              </select>
+              <Button variant="secondary" size="icon" aria-label={`Sort ${sortOrder === "desc" ? "descending" : "ascending"}`} onClick={() => setSortOrder((order) => order === "desc" ? "asc" : "desc")}>{sortOrder === "desc" ? <ArrowDown className="size-4" /> : <ArrowUp className="size-4" />}</Button>
+            </div>
+          </div>
+          {activeFilters > 0 && <div className="mt-3 flex items-center gap-2 border-t pt-3 text-xs text-[#667085]"><Badge tone="purple">{activeFilters} active</Badge><button className="font-semibold text-primary hover:underline" onClick={() => { setStatus(""); setMinScore(""); setPage(1); }}>Clear filters</button></div>}
+        </section>
+
+        <section className="overflow-hidden rounded-xl border bg-white shadow-panel">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <div><h2 className="font-semibold text-[#101828]">Candidates</h2><p className="mt-0.5 text-xs text-[#667085]">{loading ? "Loading…" : `${total} candidate${total === 1 ? "" : "s"} found`}</p></div>
+            <Button variant="ghost" size="sm" onClick={() => setRefreshKey((key) => key + 1)} disabled={loading}><RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />Refresh</Button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1240px] table-fixed text-left">
+              <thead className="bg-[#f8f9fb] text-[11px] font-bold uppercase tracking-wider text-[#667085]">
+                <tr>
+                  <th className="w-[220px] px-5 py-3">Candidate</th>
+                  <th className="w-[145px] px-4 py-3">JD → Resume Score</th>
+                  <th className="w-[145px] px-4 py-3">HR Screening Score</th>
+                  <th className="px-4 py-3">Why Candidate Fits</th>
+                  <th className="w-[70px] px-3 py-3 text-center">Call</th>
+                  <th className="w-[125px] px-3 py-3 text-center">Email</th>
+                  <th className="w-[125px] px-3 py-3 text-center">Decision</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {loading ? <TableSkeleton /> : candidates.map((candidate) => (
+                  <tr key={candidate.id} className="group hover:bg-[#fcfcfd]">
+                    <td className="px-5 py-4">
+                      <button className="flex max-w-full items-center gap-3 text-left" onClick={() => router.push(`/screening/candidates/${encodeURIComponent(candidate.id)}${candidate.jobId ? `?job_id=${encodeURIComponent(candidate.jobId)}` : ""}`)}>
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#fff0f7] text-xs font-bold text-[#b00665]">{initials(candidate.name)}</span>
+                        <span className="min-w-0"><span className="block truncate text-sm font-semibold text-[#101828] group-hover:text-primary">{candidate.name}</span><span className="block truncate text-xs text-[#667085]">{candidate.email}</span><span className="block truncate text-[11px] text-[#98a2b3]">{candidate.phone ?? "No phone"} · {candidate.jobTitle ?? "Selected job"}{candidate.appliedAt ? ` · Applied ${formatDate(candidate.appliedAt)}` : ""}</span></span>
+                      </button>
+                    </td>
+                    <td className="px-4 py-4"><button disabled={candidate.jdScore == null} onClick={() => openDrawer(candidate, "jd")} aria-label={`JD score for ${candidate.name}`}><ScorePill score={candidate.jdScore} /><span className="mt-1 block text-[10px] text-[#98a2b3]">{candidate.resumeStatus ?? "Processed"}</span></button></td>
+                    <td className="px-4 py-4"><button disabled={candidate.hrScore == null} onClick={() => openDrawer(candidate, "hr")} aria-label={`HR score for ${candidate.name}`}><ScorePill score={candidate.hrScore} /><span className="mt-1 block max-w-32 text-[10px] text-[#667085]">{candidate.screeningStatus ?? (candidate.hrScore == null ? "Not Screened" : "Awaiting HR Decision")}</span>{candidate.screenedAt && <span className="block text-[10px] text-[#98a2b3]">{formatDate(candidate.screenedAt)}</span>}</button></td>
+                    <td className="px-4 py-4"><p className="line-clamp-2 text-sm leading-5 text-[#475467]" title={candidate.fitReason}>{candidate.fitReason}</p><div className="mt-2 flex flex-wrap gap-1.5"><Badge tone={candidate.status?.toLowerCase() === "rejected" ? "red" : candidate.status?.toLowerCase() === "advanced" ? "green" : "purple"}>{candidate.currentStage ?? "Resume Review"}</Badge>{candidate.screeningRecommendation && <Badge tone="amber">AI: {candidate.screeningRecommendation.replaceAll("_", " ")}</Badge>}</div></td>
+                    <td className="px-3 py-4 text-center"><Button variant="ghost" size="icon" aria-label={`Call ${candidate.name}`} onClick={() => router.push(`/screening/call/${encodeURIComponent(candidate.id)}${candidate.jobId ? `?job_id=${encodeURIComponent(candidate.jobId)}` : ""}`)}><Phone className="size-[18px]" /></Button></td>
+                    <td className="px-3 py-4 text-center"><button className="inline-flex flex-col items-center gap-1 text-xs font-medium text-[#667085] hover:text-primary" aria-label={`Email history for ${candidate.name}`} onClick={() => router.push(`/screening/candidates/${encodeURIComponent(candidate.id)}${candidate.jobId ? `?job_id=${encodeURIComponent(candidate.jobId)}` : ""}`)}><Mail className="size-[18px]" /><span>{candidate.emailStatus ?? "Not Sent"}</span></button></td>
+                    <td className="px-3 py-4 text-center"><Badge tone={candidate.decisionStatus === "rejected" ? "red" : candidate.decisionStatus === "accepted" || candidate.decisionStatus === "advanced" ? "green" : "amber"}>{candidate.decisionStatus === "accepted" || candidate.decisionStatus === "advanced" ? "Accepted" : candidate.decisionStatus === "rejected" ? "Rejected" : candidate.decisionStatus === "needs_review" ? "Needs Review" : "Pending Review"}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!loading && error && <StatePanel icon={<RefreshCw className="size-6" />} title="Couldn’t load candidates" description={error}><Button variant="secondary" onClick={() => setRefreshKey((key) => key + 1)}>Try again</Button></StatePanel>}
+          {!loading && !error && candidates.length === 0 && <StatePanel icon={<FileText className="size-6" />} title={search || activeFilters ? "No matching candidates" : "No candidates yet"} description={search || activeFilters ? "Try changing your search or filters." : "Upload resumes to begin screening candidates."}><Button onClick={() => setUploadKind("resume")}><Plus className="size-4" />Upload resumes</Button></StatePanel>}
+          {!loading && !error && candidates.length > 0 && (
+            <div className="flex flex-col items-center justify-between gap-3 border-t px-5 py-4 sm:flex-row">
+              <p className="text-xs text-[#667085]">Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}</p>
+              <div className="flex items-center gap-2"><Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}><ChevronLeft className="size-4" />Previous</Button><span className="px-2 text-xs font-medium">Page {page} of {pageCount}</span><Button variant="secondary" size="sm" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}>Next<ChevronRight className="size-4" /></Button></div>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <ScoreDrawer candidate={selected} type="jd" open={drawer === "jd"} onOpenChange={(open) => !open && setDrawer(null)} />
+      <ScoreDrawer candidate={selected} type="hr" open={drawer === "hr"} onOpenChange={(open) => !open && setDrawer(null)} />
+      {uploadKind && (
+        <UploadDialog
+          kind={uploadKind}
+          open={Boolean(uploadKind)}
+          onOpenChange={(open) => !open && setUploadKind(null)}
+          jobId={jobId}
+          onComplete={(createdJob) => {
+            if (createdJob) {
+              setJobs((current) => [createdJob, ...current.filter((job) => job.id !== createdJob.id)]);
+              setJobId(createdJob.id);
+            }
+            setRefreshKey((key) => key + 1);
+          }}
+          onNotice={showNotice}
+        />
+      )}
+      {notice && <div role={notice.error ? "alert" : "status"} className={`fixed bottom-5 right-5 z-[100] max-w-sm rounded-xl border px-4 py-3 text-sm font-medium shadow-xl ${notice.error ? "border-red-200 bg-red-50 text-red-800" : "border-green-200 bg-white text-green-800"}`}>{notice.message}</div>}
+    </div>
+  );
+}
+
+function TableSkeleton() {
+  return <>{Array.from({ length: 6 }).map((_, index) => <tr key={index}><td className="px-5 py-4"><div className="flex items-center gap-3"><Skeleton className="size-9 rounded-full" /><div className="space-y-2"><Skeleton className="h-3 w-28" /><Skeleton className="h-2.5 w-36" /></div></div></td><td className="px-4"><Skeleton className="h-6 w-12 rounded-full" /></td><td className="px-4"><Skeleton className="h-6 w-12 rounded-full" /></td><td className="px-4"><Skeleton className="h-3 w-full max-w-sm" /></td><td><Skeleton className="mx-auto size-8 rounded-lg" /></td><td><Skeleton className="mx-auto size-8 rounded-lg" /></td></tr>)}</>;
+}
+
+function StatePanel({ icon, title, description, children }: { icon: React.ReactNode; title: string; description: string; children: React.ReactNode }) {
+  return <div className="flex flex-col items-center border-t px-6 py-16 text-center"><span className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted text-[#667085]">{icon}</span><h3 className="font-semibold">{title}</h3><p className="mb-5 mt-1 max-w-md text-sm text-[#667085]">{description}</p>{children}</div>;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+}

@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: catalyst-ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: catalyst_user
+      POSTGRES_PASSWORD: catalyst_password
+      POSTGRES_DB: catalyst_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - catalyst_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalyst_user -d catalyst_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  catalyst_postgres_data:
