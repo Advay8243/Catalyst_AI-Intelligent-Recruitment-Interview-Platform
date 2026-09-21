@@ -12,16 +12,33 @@ import {
   Mail,
   Phone,
   Sparkles,
+  Trash2,
   UserRound,
   XCircle,
 } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmailComposer } from "@/components/email-composer";
+import { EmptyState } from "@/components/empty-state";
 import { Badge, Button, Dialog, DialogContent, Progress, Skeleton } from "@/components/ui";
-import { getCandidateReview, recordDecision, resumeDownloadUrl } from "@/lib/api";
+import {
+  correctResumeParse,
+  getCandidateReview,
+  recordDecision,
+  removeCandidateApplication,
+  resumeDownloadUrl,
+} from "@/lib/api";
 import type { Candidate, CandidateReview, Decision, EmailHistoryItem, EmailType } from "@/lib/types";
-import { initials } from "@/lib/utils";
+import {
+  formatAiRecommendation,
+  friendlyErrorMessage,
+  initials,
+  scoreBandLabel,
+  scoreTextClass,
+  scoreTone,
+} from "@/lib/utils";
+
+type DetailTab = "overview" | "match" | "screening" | "decision" | "history";
 
 export default function CandidateReviewPage() {
   const { candidate_id: candidateId } = useParams<{ candidate_id: string }>();
@@ -38,6 +55,21 @@ export default function CandidateReviewPage() {
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailType, setEmailType] = useState<EmailType | undefined>();
   const [notice, setNotice] = useState("");
+  const [editingParse, setEditingParse] = useState(false);
+  const [savingParse, setSavingParse] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [tab, setTab] = useState<DetailTab>("overview");
+  const [parseForm, setParseForm] = useState({
+    full_name: "",
+    email: "",
+    phone: "",
+    skills: "",
+    years_experience: "",
+    education: "",
+    certifications: "",
+    projects: "",
+    employment_history: "",
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,7 +77,7 @@ export default function CandidateReviewPage() {
     try {
       setReview(await getCandidateReview(candidateId, jobId));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load candidate review.");
+      setError(friendlyErrorMessage(caught, "Unable to load candidate review."));
     } finally {
       setLoading(false);
     }
@@ -54,6 +86,22 @@ export default function CandidateReviewPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!review) return;
+    const parsed = review.resume.parsed_data;
+    setParseForm({
+      full_name: review.candidate.name,
+      email: review.candidate.email,
+      phone: review.candidate.phone ?? "",
+      skills: (parsed.skills ?? []).join(", "),
+      years_experience: String(parsed.years_experience ?? ""),
+      education: (parsed.education ?? []).join(", "),
+      certifications: (parsed.certifications ?? []).join(", "),
+      projects: (parsed.projects ?? []).join("\n"),
+      employment_history: (parsed.employment_history ?? []).join("\n"),
+    });
+  }, [review]);
 
   const candidateForEmail = useMemo<Candidate | null>(() => {
     if (!review) return null;
@@ -102,6 +150,55 @@ export default function CandidateReviewPage() {
       setError(caught instanceof Error ? caught.message : "Unable to record decision.");
     } finally {
       setDeciding(false);
+    }
+  }
+
+  async function saveParseCorrections() {
+    if (!review) return;
+    setSavingParse(true);
+    setError("");
+    try {
+      const split = (value: string) =>
+        value
+          .split(/[,\n]/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+      await correctResumeParse(review.candidate.id, review.job.id, {
+        full_name: parseForm.full_name.trim() || undefined,
+        email: parseForm.email.trim() || undefined,
+        phone: parseForm.phone.trim() || undefined,
+        skills: split(parseForm.skills),
+        years_experience: Number(parseForm.years_experience) || 0,
+        education: split(parseForm.education),
+        certifications: split(parseForm.certifications),
+        projects: split(parseForm.projects),
+        employment_history: split(parseForm.employment_history),
+      });
+      setEditingParse(false);
+      setNotice("Parsed resume corrected. Matching scores were refreshed.");
+      await load();
+    } catch (caught) {
+      setError(friendlyErrorMessage(caught, "Unable to save parse corrections."));
+    } finally {
+      setSavingParse(false);
+    }
+  }
+
+  async function removeResume() {
+    if (!review) return;
+    if (!confirm("Remove this resume application so it can be re-uploaded? Screening, decisions, and emails for this job will also be cleared.")) {
+      return;
+    }
+    setRemoving(true);
+    setError("");
+    try {
+      await removeCandidateApplication(review.job.id, review.candidate.id);
+      setNotice("Resume removed. You can re-upload from Candidate Screening.");
+      router.push("/screening");
+    } catch (caught) {
+      setError(friendlyErrorMessage(caught, "Unable to remove resume."));
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -157,13 +254,34 @@ export default function CandidateReviewPage() {
                   <Button variant="secondary" disabled={!screening || decision === "needs_review"} onClick={() => setConfirming("needs_review")}><History className="size-4" />Request Further Review</Button>
                 </>
               )}
+              <Button variant="danger" disabled={removing} onClick={() => void removeResume()}>
+                <Trash2 className="size-4" />{removing ? "Removing…" : "Remove resume"}
+              </Button>
             </div>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-2">
+            {([
+              ["overview", "Overview"],
+              ["match", "Resume Match"],
+              ["screening", "HR Screening"],
+              ["decision", "Decision & Email"],
+              ["history", "History"],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={`rounded-full px-3 py-1.5 text-sm font-semibold ${tab === id ? "bg-[#fff0f7] text-primary" : "text-[#667085] hover:bg-muted"}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </header>
 
       <main className="mx-auto grid max-w-7xl gap-5 p-5 sm:p-8 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-5">
+          {(tab === "overview" || tab === "match") && (
           <Card title="Candidate information" icon={<UserRound />}>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <Info label="Email" value={review.candidate.email} icon={<Mail />} />
@@ -177,7 +295,9 @@ export default function CandidateReviewPage() {
               <Button variant="secondary"><Download className="size-4" />Download {review.resume.filename}</Button>
             </a>
           </Card>
+          )}
 
+          {tab === "overview" && (
           <Card title="Job description" icon={<BriefcaseBusiness />}>
             <p className="text-sm leading-6 text-[#475467]">{review.job.description}</p>
             <RequirementList title="Responsibilities" items={review.job.responsibilities} />
@@ -187,26 +307,91 @@ export default function CandidateReviewPage() {
             </div>
             <p className="mt-5 text-sm"><strong>Experience requirement:</strong> {review.job.experience_requirements}</p>
           </Card>
+          )}
 
+          {(tab === "overview" || tab === "match") && (
           <Card title="Resume analysis" icon={<FileText />}>
-            <Badge tone="purple">AI-generated analysis</Badge>
-            <div className="grid gap-5 md:grid-cols-[180px_1fr]">
-              <ScoreCircle score={review.resume_analysis.overall_score} label="JD → Resume" />
-              <div>
-                <RequirementList title="Extracted skills" items={review.resume.parsed_data.skills ?? []} badges />
-                <p className="mt-4 text-sm text-[#475467]"><strong>Experience:</strong> {review.resume.parsed_data.years_experience ?? "Not extracted"} years</p>
-                <RequirementList title="Education" items={review.resume.parsed_data.education ?? []} />
-                <RequirementList title="Relevant projects / highlights" items={review.resume.parsed_data.projects ?? review.resume.parsed_data.highlights ?? []} />
-              </div>
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <Badge tone="purple">AI-generated analysis</Badge>
+              {review.resume.parse_corrected_by && (
+                <Badge tone="amber">Corrected by {review.resume.parse_corrected_by}</Badge>
+              )}
+              <Button variant="secondary" size="sm" className="ml-auto" onClick={() => setEditingParse((value) => !value)}>
+                {editingParse ? "Cancel edit" : "Correct parsed data"}
+              </Button>
             </div>
-            <div className="mt-5 rounded-xl bg-[#f8f9fb] p-4 text-sm leading-6 text-[#475467]">{review.resume_analysis.explanation}</div>
+            {editingParse ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {([
+                  ["full_name", "Name"],
+                  ["email", "Email"],
+                  ["phone", "Phone"],
+                  ["years_experience", "Years experience"],
+                  ["skills", "Skills"],
+                  ["education", "Education"],
+                  ["certifications", "Certifications"],
+                  ["projects", "Projects"],
+                  ["employment_history", "Employment history"],
+                ] as const).map(([key, label]) => (
+                  <label key={key} className={`block text-sm ${key === "projects" || key === "employment_history" || key === "skills" ? "sm:col-span-2" : ""}`}>
+                    <span className="mb-1 block font-medium">{label}</span>
+                    {key === "projects" || key === "employment_history" || key === "skills" || key === "education" || key === "certifications" ? (
+                      <textarea rows={3} value={parseForm[key]} onChange={(event) => setParseForm((current) => ({ ...current, [key]: event.target.value }))} className="w-full rounded-lg border p-3 text-sm" />
+                    ) : (
+                      <input value={parseForm[key]} onChange={(event) => setParseForm((current) => ({ ...current, [key]: event.target.value }))} className="h-10 w-full rounded-lg border px-3 text-sm" />
+                    )}
+                  </label>
+                ))}
+                <div className="sm:col-span-2">
+                  <Button disabled={savingParse} onClick={() => void saveParseCorrections()}>{savingParse ? "Saving…" : "Save corrections & re-match"}</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-5 md:grid-cols-[180px_1fr]">
+                <ScoreCircle score={review.resume_analysis.overall_score} label="JD → Resume" />
+                <div>
+                  <RequirementList title="Extracted skills" items={review.resume.parsed_data.skills ?? []} badges />
+                  <p className="mt-4 text-sm text-[#475467]"><strong>Experience:</strong> {review.resume.parsed_data.years_experience ?? "Not extracted"} years</p>
+                  <RequirementList title="Education" items={review.resume.parsed_data.education ?? []} />
+                  <RequirementList title="Certifications" items={review.resume.parsed_data.certifications ?? []} />
+                  <RequirementList title="Projects" items={review.resume.parsed_data.projects ?? []} />
+                  <RequirementList title="Employment history" items={review.resume.parsed_data.employment_history ?? []} />
+                  <RequirementList title="Relevant highlights" items={review.resume.parsed_data.highlights ?? []} />
+                </div>
+              </div>
+            )}
+            {!editingParse && (
+              <>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <Metric label="Required skills" score={Number((review.resume_analysis.scoring?.match_details as { required_skill_score?: number } | undefined)?.required_skill_score ?? (review.resume_analysis.scoring?.skills as { score?: number } | undefined)?.score ?? 0)} />
+                  <Metric label="Preferred skills" score={Number((review.resume_analysis.scoring?.match_details as { preferred_skill_score?: number } | undefined)?.preferred_skill_score ?? 0)} />
+                  <Metric label="Experience" score={Number((review.resume_analysis.scoring?.experience as { score?: number } | undefined)?.score ?? 0)} />
+                  <Metric label="Responsibilities" score={Number((review.resume_analysis.scoring?.match_details as { responsibilities_score?: number } | undefined)?.responsibilities_score ?? 0)} />
+                  <Metric label="Education / certs" score={Number((review.resume_analysis.scoring?.match_details as { education_certification_score?: number } | undefined)?.education_certification_score ?? (review.resume_analysis.scoring?.education as { score?: number } | undefined)?.score ?? 0)} />
+                </div>
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  <EvidenceList title="Matched skills" items={(review.resume_analysis.evidence?.matched_skills as string[] | undefined) ?? []} tone="green" />
+                  <EvidenceList title="Missing skills" items={(review.resume_analysis.evidence?.missing_skills as string[] | undefined) ?? []} tone="amber" />
+                </div>
+                <div className="mt-5 rounded-xl bg-[#f8f9fb] p-4 text-sm leading-6 text-[#475467]">{review.resume_analysis.explanation}</div>
+              </>
+            )}
           </Card>
+          )}
 
+          {(tab === "overview" || tab === "screening") && (
           <Card title="HR screening review" icon={<Sparkles />}>
             {!screening ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-                HR screening has not been completed. Complete the call before recording a decision.
-              </div>
+              <EmptyState
+                icon={<Phone className="size-6" />}
+                title="No HR calls yet"
+                description="Complete the recruiter screening call to populate transcript analysis and HR scores."
+                action={
+                  <Button onClick={() => router.push(`/screening/call/${encodeURIComponent(review.candidate.id)}?job_id=${encodeURIComponent(review.job.id)}`)}>
+                    Start HR call
+                  </Button>
+                }
+              />
             ) : (
               <>
                 <div className="flex flex-col gap-5 rounded-xl border bg-[#fcfcfd] p-5 sm:flex-row sm:items-center">
@@ -239,6 +424,19 @@ export default function CandidateReviewPage() {
                     </div>
                   ))}
                 </div>
+                {review.call_session?.transcript?.length ? (
+                  <div className="mt-6">
+                    <h3 className="mb-3 font-semibold">Call transcript</h3>
+                    <div className="max-h-72 space-y-3 overflow-y-auto rounded-xl border p-4">
+                      {review.call_session.transcript.map((entry) => (
+                        <div key={entry.id} className="text-sm">
+                          <p className="text-xs font-bold uppercase tracking-wide text-[#98a2b3]">{entry.speaker}</p>
+                          <p className="mt-1 text-[#475467]">{entry.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-6 grid gap-4 md:grid-cols-2">
                   <EvidenceList title="Strengths" items={screening.strengths} tone="green" />
                   <EvidenceList title="Concerns" items={screening.concerns} tone="amber" />
@@ -246,7 +444,9 @@ export default function CandidateReviewPage() {
               </>
             )}
           </Card>
+          )}
 
+          {(tab === "overview" || tab === "history") && (
           <Card title="Candidate timeline" icon={<History />}>
             {review.timeline.length ? (
               <ol className="relative ml-3 border-l border-[#d0d5dd]">
@@ -260,9 +460,13 @@ export default function CandidateReviewPage() {
                   </li>
                 ))}
               </ol>
-            ) : <p className="text-sm text-[#667085]">No timeline events are available.</p>}
+            ) : (
+              <EmptyState icon={<History className="size-6" />} title="No audit history" description="Timeline events appear as resumes are uploaded, scored, screened, and decided." />
+            )}
           </Card>
+          )}
 
+          {(tab === "overview" || tab === "decision" || tab === "history") && (
           <Card title="Decision history" icon={<CheckCircle2 />}>
             {review.decision_history.length ? (
               <div className="space-y-3">
@@ -278,9 +482,13 @@ export default function CandidateReviewPage() {
                   </div>
                 ))}
               </div>
-            ) : <p className="text-sm text-[#667085]">No human decision has been recorded.</p>}
+            ) : (
+              <EmptyState icon={<CheckCircle2 className="size-6" />} title="No decisions yet" description="Record an Accept, Reject, or Further Review decision after HR screening." />
+            )}
           </Card>
+          )}
 
+          {(tab === "overview" || tab === "decision" || tab === "history") && (
           <Card title="Email history" icon={<Mail />}>
             {review.email_history.length ? (
               <div className="divide-y rounded-xl border">
@@ -295,8 +503,11 @@ export default function CandidateReviewPage() {
                   </div>
                 ))}
               </div>
-            ) : <p className="text-sm text-[#667085]">No candidate emails have been mock-sent yet.</p>}
+            ) : (
+              <EmptyState icon={<Mail className="size-6" />} title="No emails yet" description="Acceptance, rejection, and interviewer notifications appear here after sending." />
+            )}
           </Card>
+          )}
         </div>
 
         <aside className="space-y-5">
@@ -305,7 +516,7 @@ export default function CandidateReviewPage() {
             <dl className="space-y-4">
               <CompactInfo label="Resume" value={review.application.resume_status} />
               <CompactInfo label="HR screening" value={review.application.screening_status} />
-              <CompactInfo label="AI recommendation" value={screening?.recommendation.replaceAll("_", " ") ?? "Not available"} />
+              <CompactInfo label="AI recommendation" value={formatAiRecommendation(screening?.recommendation)} />
               <CompactInfo label="Screened" value={review.application.screened_at ? formatDateTime(review.application.screened_at) : "Not yet"} />
               <CompactInfo label="Human decision" value={decision ? decisionLabel(decision) : "Pending Review"} />
               {review.application.decision_by && <CompactInfo label="Decision maker" value={review.application.decision_by} />}
@@ -374,7 +585,23 @@ function RequirementList({ title, items, badges = false }: { title: string; item
 }
 
 function ScoreCircle({ score, label }: { score: number; label: string }) {
-  return <div className="flex items-center gap-3"><span className="flex size-20 shrink-0 items-center justify-center rounded-full border-[7px] border-[#ffd2e8] text-xl font-bold text-primary">{score}%</span><span className="text-xs font-medium text-[#667085]">{label}</span></div>;
+  const tone = scoreTone(score);
+  const ring =
+    tone === "emerald" || tone === "green"
+      ? "border-green-300"
+      : tone === "red"
+        ? "border-red-300"
+        : tone === "orange"
+          ? "border-orange-300"
+          : "border-amber-300";
+  return (
+    <div className="flex items-center gap-3">
+      <span className={`flex size-20 shrink-0 items-center justify-center rounded-full border-[7px] text-xl font-bold ${ring} ${scoreTextClass(score)}`}>
+        {score}%
+      </span>
+      <span className="text-xs font-medium text-[#667085]">{label}<br />Band {scoreBandLabel(score)}</span>
+    </div>
+  );
 }
 
 function Metric({ label, score }: { label: string; score: number }) {

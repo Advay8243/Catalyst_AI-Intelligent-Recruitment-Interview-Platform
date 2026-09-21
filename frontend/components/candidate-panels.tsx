@@ -3,12 +3,16 @@
 import { BriefcaseBusiness, Download, ExternalLink, Mail, MapPin, Phone, UserRound } from "lucide-react";
 import type { Candidate } from "@/lib/types";
 import { Badge, Button, Dialog, DialogContent, Progress } from "@/components/ui";
-import { initials } from "@/lib/utils";
+import { initials, scoreBandLabel, scoreTextClass, scoreTone } from "@/lib/utils";
 
 export function ScorePill({ score }: { score: number | null }) {
   if (score == null) return <span className="text-sm text-[#98a2b3]">Pending</span>;
-  const tone = score >= 80 ? "green" : score >= 60 ? "amber" : "red";
-  return <Badge tone={tone} className="min-w-12 justify-center py-1">{Math.round(score)}%</Badge>;
+  return (
+    <span className="inline-flex flex-col items-center gap-0.5">
+      <Badge tone={scoreTone(score)} className="min-w-12 justify-center py-1">{Math.round(score)}%</Badge>
+      <span className="text-[10px] font-medium text-[#98a2b3]">{scoreBandLabel(score)}</span>
+    </span>
+  );
 }
 
 function Drawer({
@@ -86,18 +90,27 @@ export function ScoreDrawer({
 }) {
   if (!candidate) return null;
   const score = type === "jd" ? candidate.jdScore : candidate.hrScore;
+  const scoreColor = score == null ? "text-[#101828]" : scoreTextClass(score);
   const breakdown = candidate.scoreBreakdown;
   const metrics = [
-    ["Skills match", breakdown?.skills],
+    ["Required skills", breakdown?.required_skills ?? breakdown?.skills],
+    ["Preferred skills", breakdown?.preferred_skills],
     ["Experience fit", breakdown?.experience],
-    ["Education", breakdown?.education],
+    ["Responsibilities", breakdown?.responsibilities],
+    ["Education / certifications", breakdown?.education_certification ?? breakdown?.education],
     ["Role relevance", breakdown?.relevance],
   ] as const;
   return (
     <Drawer open={open} onOpenChange={onOpenChange} title={type === "jd" ? "JD → Resume Score" : "HR Screening Analysis"} description={`${candidate.name} · ${candidate.jobTitle ?? "Selected job"}`}>
       <div className="mt-6 border-y bg-[#fafbfc] p-6">
         <p className="text-sm text-[#667085]">Overall score</p>
-        <div className="mt-2 flex items-end gap-2"><span className="text-4xl font-bold text-[#101828]">{score == null ? "—" : Math.round(score)}</span>{score != null && <span className="mb-1 text-lg text-[#98a2b3]">/ 100</span>}</div>
+        <div className="mt-2 flex items-end gap-2">
+          <span className={`text-4xl font-bold ${scoreColor}`}>
+            {score == null ? "—" : Math.round(score)}
+          </span>
+          {score != null && <span className="mb-1 text-lg text-[#98a2b3]">/ 100</span>}
+        </div>
+        {score != null && <p className="mt-1 text-xs font-medium text-[#667085]">Band {scoreBandLabel(score)}</p>}
       </div>
       <div className="space-y-6 p-6">
         {type === "hr" ? (
@@ -112,8 +125,28 @@ export function ScoreDrawer({
                 </div>
               ))}
             </section>
+            {(breakdown?.matched_skills?.length || breakdown?.missing_skills?.length) ? (
+              <section className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+                  <h3 className="text-sm font-semibold text-green-900">Matched skills</h3>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {(breakdown?.matched_skills ?? []).length
+                      ? breakdown?.matched_skills?.map((skill) => <Badge key={skill} tone="green">{skill}</Badge>)
+                      : <span className="text-sm text-[#667085]">None</span>}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <h3 className="text-sm font-semibold text-amber-900">Missing skills</h3>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {(breakdown?.missing_skills ?? []).length
+                      ? breakdown?.missing_skills?.map((skill) => <Badge key={skill} tone="amber">{skill}</Badge>)
+                      : <span className="text-sm text-[#667085]">None</span>}
+                  </div>
+                </div>
+              </section>
+            ) : null}
             <section className="rounded-xl bg-[#f8f9fb] p-4">
-              <h3 className="mb-2 text-sm font-semibold">AI summary</h3>
+              <h3 className="mb-2 text-sm font-semibold">Why Candidate Fits</h3>
               <p className="text-sm leading-6 text-[#667085]">{breakdown?.summary ?? candidate.fitReason}</p>
             </section>
           </>

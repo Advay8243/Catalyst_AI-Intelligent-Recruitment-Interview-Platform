@@ -18,12 +18,13 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { EmptyState, ErrorBanner } from "@/components/empty-state";
 import { ScoreDrawer, ScorePill } from "@/components/candidate-panels";
 import { UploadDialog } from "@/components/upload-dialog";
 import { Badge, Button, Input, Skeleton } from "@/components/ui";
 import { getCandidates, getJobs } from "@/lib/api";
 import type { Candidate, CandidateQuery, Job } from "@/lib/types";
-import { initials } from "@/lib/utils";
+import { formatAiRecommendation, formatEmailStatus, friendlyErrorMessage, initials } from "@/lib/utils";
 
 const PAGE_SIZE = 10;
 
@@ -40,7 +41,9 @@ export function ScreeningClient() {
   const [search, setSearch] = useState("");
   const [jobId, setJobId] = useState("");
   const [status, setStatus] = useState("");
+  const [screeningStatus, setScreeningStatus] = useState("");
   const [minScore, setMinScore] = useState("");
+  const [maxScore, setMaxScore] = useState("");
   const [sortBy, setSortBy] = useState("jdScore");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -61,10 +64,14 @@ export function ScreeningClient() {
   useEffect(() => {
     getJobs()
       .then((items) => {
-        setJobs(items);
-        setJobId((current) => current || items[0]?.id || "");
+        const usable = items.filter((job) => job.status !== "archived");
+        setJobs(usable);
+        setJobId((current) => current || usable[0]?.id || "");
       })
-      .catch(() => setJobs([]));
+      .catch((caught) => {
+        setJobs([]);
+        setError(friendlyErrorMessage(caught, "Could not load jobs."));
+      });
   }, []);
 
   const query = useMemo<CandidateQuery>(() => ({
@@ -73,10 +80,12 @@ export function ScreeningClient() {
     search,
     jobId,
     status,
+    screeningStatus,
     minScore,
+    maxScore,
     sortBy,
     sortOrder,
-  }), [page, search, jobId, status, minScore, sortBy, sortOrder]);
+  }), [page, search, jobId, status, screeningStatus, minScore, maxScore, sortBy, sortOrder]);
 
   const loadCandidates = useCallback(async () => {
     setLoading(true);
@@ -88,7 +97,7 @@ export function ScreeningClient() {
     } catch (caught) {
       setCandidates([]);
       setTotal(0);
-      setError(caught instanceof Error ? caught.message : "Could not load candidates.");
+      setError(friendlyErrorMessage(caught, "Could not load candidates."));
     } finally {
       setLoading(false);
     }
@@ -105,7 +114,7 @@ export function ScreeningClient() {
   }, [notice]);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const activeFilters = [status, minScore].filter(Boolean).length;
+  const activeFilters = [status, screeningStatus, minScore, maxScore].filter(Boolean).length;
   const showNotice = (message: string, noticeError = false) => setNotice({ message, error: noticeError });
   const openDrawer = (candidate: Candidate, panel: "jd" | "hr") => {
     setSelected(candidate);
@@ -138,28 +147,58 @@ export function ScreeningClient() {
             </label>
             <select aria-label="Select job" value={jobId} onChange={(event) => { setJobId(event.target.value); setPage(1); }} className="h-10 min-w-48 rounded-lg border bg-white px-3 text-sm text-[#344054] shadow-sm">
               <option value="">All jobs</option>
-              {jobs.map((job) => <option value={job.id} key={job.id}>{job.title}</option>)}
+              {jobs.filter((job) => job.status !== "archived").map((job) => <option value={job.id} key={job.id}>{job.title}{job.status === "draft" ? " (draft)" : ""}</option>)}
             </select>
             <div className="flex flex-1 flex-wrap gap-2 xl:justify-end">
               <div className="relative">
                 <Filter className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#667085]" />
-                <select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="h-10 appearance-none rounded-lg border bg-white pl-9 pr-8 text-sm shadow-sm">
-                  <option value="">All statuses</option><option value="new">Awaiting decision</option><option value="ADVANCED">Advanced</option><option value="REJECTED">Rejected</option>
+                <select aria-label="Filter by decision status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="h-10 appearance-none rounded-lg border bg-white pl-9 pr-8 text-sm shadow-sm">
+                  <option value="">All decisions</option>
+                  <option value="new">Pending decision</option>
+                  <option value="ACCEPTED">Accepted</option>
+                  <option value="ADVANCED">Advanced</option>
+                  <option value="REJECTED">Rejected</option>
+                  <option value="NEEDS_REVIEW">Needs Review</option>
+                </select>
+              </div>
+              <div className="relative">
+                <Filter className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#667085]" />
+                <select aria-label="Filter by HR screening status" value={screeningStatus} onChange={(event) => { setScreeningStatus(event.target.value); setPage(1); }} className="h-10 appearance-none rounded-lg border bg-white pl-9 pr-8 text-sm shadow-sm">
+                  <option value="">All screening</option>
+                  <option value="not_screened">Not Screened</option>
+                  <option value="screening_in_progress">Screening In Progress</option>
+                  <option value="awaiting_hr_decision">HR Screened</option>
+                  <option value="needs_review">Needs Review</option>
+                  <option value="accepted">Accepted</option>
+                  <option value="rejected">Rejected</option>
                 </select>
               </div>
               <div className="relative">
                 <SlidersHorizontal className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#667085]" />
                 <select aria-label="Minimum score" value={minScore} onChange={(event) => { setMinScore(event.target.value); setPage(1); }} className="h-10 appearance-none rounded-lg border bg-white pl-9 pr-8 text-sm shadow-sm">
-                  <option value="">Any score</option><option value="80">80% and above</option><option value="60">60% and above</option><option value="40">40% and above</option>
+                  <option value="">Min score</option>
+                  <option value="90">90+</option>
+                  <option value="80">80+</option>
+                  <option value="70">70+</option>
+                  <option value="60">60+</option>
+                  <option value="40">40+</option>
                 </select>
               </div>
+              <select aria-label="Maximum score" value={maxScore} onChange={(event) => { setMaxScore(event.target.value); setPage(1); }} className="h-10 rounded-lg border bg-white px-3 text-sm shadow-sm">
+                <option value="">Max score</option>
+                <option value="100">100</option>
+                <option value="89">89</option>
+                <option value="79">79</option>
+                <option value="69">69</option>
+                <option value="59">59</option>
+              </select>
               <select aria-label="Sort candidates" value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1); }} className="h-10 rounded-lg border bg-white px-3 text-sm shadow-sm">
                 <option value="jdScore">Sort: JD score</option><option value="hrScore">Sort: HR score</option><option value="name">Sort: Name</option><option value="createdAt">Sort: Newest</option>
               </select>
               <Button variant="secondary" size="icon" aria-label={`Sort ${sortOrder === "desc" ? "descending" : "ascending"}`} onClick={() => setSortOrder((order) => order === "desc" ? "asc" : "desc")}>{sortOrder === "desc" ? <ArrowDown className="size-4" /> : <ArrowUp className="size-4" />}</Button>
             </div>
           </div>
-          {activeFilters > 0 && <div className="mt-3 flex items-center gap-2 border-t pt-3 text-xs text-[#667085]"><Badge tone="purple">{activeFilters} active</Badge><button className="font-semibold text-primary hover:underline" onClick={() => { setStatus(""); setMinScore(""); setPage(1); }}>Clear filters</button></div>}
+          {activeFilters > 0 && <div className="mt-3 flex items-center gap-2 border-t pt-3 text-xs text-[#667085]"><Badge tone="purple">{activeFilters} active</Badge><button className="font-semibold text-primary hover:underline" onClick={() => { setStatus(""); setScreeningStatus(""); setMinScore(""); setMaxScore(""); setPage(1); }}>Clear filters</button></div>}
         </section>
 
         <section className="overflow-hidden rounded-xl border bg-white shadow-panel">
@@ -191,17 +230,32 @@ export function ScreeningClient() {
                     </td>
                     <td className="px-4 py-4"><button disabled={candidate.jdScore == null} onClick={() => openDrawer(candidate, "jd")} aria-label={`JD score for ${candidate.name}`}><ScorePill score={candidate.jdScore} /><span className="mt-1 block text-[10px] text-[#98a2b3]">{candidate.resumeStatus ?? "Processed"}</span></button></td>
                     <td className="px-4 py-4"><button disabled={candidate.hrScore == null} onClick={() => openDrawer(candidate, "hr")} aria-label={`HR score for ${candidate.name}`}><ScorePill score={candidate.hrScore} /><span className="mt-1 block max-w-32 text-[10px] text-[#667085]">{candidate.screeningStatus ?? (candidate.hrScore == null ? "Not Screened" : "Awaiting HR Decision")}</span>{candidate.screenedAt && <span className="block text-[10px] text-[#98a2b3]">{formatDate(candidate.screenedAt)}</span>}</button></td>
-                    <td className="px-4 py-4"><p className="line-clamp-2 text-sm leading-5 text-[#475467]" title={candidate.fitReason}>{candidate.fitReason}</p><div className="mt-2 flex flex-wrap gap-1.5"><Badge tone={candidate.status?.toLowerCase() === "rejected" ? "red" : candidate.status?.toLowerCase() === "advanced" ? "green" : "purple"}>{candidate.currentStage ?? "Resume Review"}</Badge>{candidate.screeningRecommendation && <Badge tone="amber">AI: {candidate.screeningRecommendation.replaceAll("_", " ")}</Badge>}</div></td>
+                    <td className="px-4 py-4"><p className="line-clamp-2 text-sm leading-5 text-[#475467]" title={candidate.fitReason}>{candidate.fitReason}</p><div className="mt-2 flex flex-wrap gap-1.5"><Badge tone={candidate.status?.toLowerCase() === "rejected" ? "red" : candidate.status?.toLowerCase() === "advanced" || candidate.status?.toLowerCase() === "accepted" ? "green" : "purple"}>{candidate.currentStage ?? "Resume Review"}</Badge>{candidate.screeningRecommendation && <Badge tone="amber">AI: {formatAiRecommendation(candidate.screeningRecommendation)}</Badge>}</div></td>
                     <td className="px-3 py-4 text-center"><Button variant="ghost" size="icon" aria-label={`Call ${candidate.name}`} onClick={() => router.push(`/screening/call/${encodeURIComponent(candidate.id)}${candidate.jobId ? `?job_id=${encodeURIComponent(candidate.jobId)}` : ""}`)}><Phone className="size-[18px]" /></Button></td>
-                    <td className="px-3 py-4 text-center"><button className="inline-flex flex-col items-center gap-1 text-xs font-medium text-[#667085] hover:text-primary" aria-label={`Email history for ${candidate.name}`} onClick={() => router.push(`/screening/candidates/${encodeURIComponent(candidate.id)}${candidate.jobId ? `?job_id=${encodeURIComponent(candidate.jobId)}` : ""}`)}><Mail className="size-[18px]" /><span>{candidate.emailStatus ?? "Not Sent"}</span></button></td>
+                    <td className="px-3 py-4 text-center"><button className="inline-flex flex-col items-center gap-1 text-xs font-medium text-[#667085] hover:text-primary" aria-label={`Email history for ${candidate.name}`} onClick={() => router.push(`/screening/candidates/${encodeURIComponent(candidate.id)}${candidate.jobId ? `?job_id=${encodeURIComponent(candidate.jobId)}` : ""}`)}><Mail className="size-[18px]" /><span>{formatEmailStatus(candidate.emailStatus)}</span></button></td>
                     <td className="px-3 py-4 text-center"><Badge tone={candidate.decisionStatus === "rejected" ? "red" : candidate.decisionStatus === "accepted" || candidate.decisionStatus === "advanced" ? "green" : "amber"}>{candidate.decisionStatus === "accepted" || candidate.decisionStatus === "advanced" ? "Accepted" : candidate.decisionStatus === "rejected" ? "Rejected" : candidate.decisionStatus === "needs_review" ? "Needs Review" : "Pending Review"}</Badge></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {!loading && error && <StatePanel icon={<RefreshCw className="size-6" />} title="Couldn’t load candidates" description={error}><Button variant="secondary" onClick={() => setRefreshKey((key) => key + 1)}>Try again</Button></StatePanel>}
-          {!loading && !error && candidates.length === 0 && <StatePanel icon={<FileText className="size-6" />} title={search || activeFilters ? "No matching candidates" : "No candidates yet"} description={search || activeFilters ? "Try changing your search or filters." : "Upload resumes to begin screening candidates."}><Button onClick={() => setUploadKind("resume")}><Plus className="size-4" />Upload resumes</Button></StatePanel>}
+          {!loading && error && <ErrorBanner message={error} onRetry={() => setRefreshKey((key) => key + 1)} />}
+          {!loading && !error && !jobId && jobs.length === 0 && (
+            <EmptyState
+              icon={<FileText className="size-6" />}
+              title="No jobs"
+              description="Create a job description before uploading resumes."
+              action={<Button onClick={() => setUploadKind("jd")}><Plus className="size-4" />Upload / paste JD</Button>}
+            />
+          )}
+          {!loading && !error && candidates.length === 0 && (jobId || jobs.length > 0) && (
+            <EmptyState
+              icon={<FileText className="size-6" />}
+              title={search || activeFilters ? "No matching candidates" : "No candidates yet"}
+              description={search || activeFilters ? "Try changing your search or filters." : "Upload resumes to begin screening candidates."}
+              action={!search && !activeFilters ? <Button onClick={() => setUploadKind("resume")}><Plus className="size-4" />Upload resumes</Button> : undefined}
+            />
+          )}
           {!loading && !error && candidates.length > 0 && (
             <div className="flex flex-col items-center justify-between gap-3 border-t px-5 py-4 sm:flex-row">
               <p className="text-xs text-[#667085]">Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}</p>
@@ -236,10 +290,6 @@ export function ScreeningClient() {
 
 function TableSkeleton() {
   return <>{Array.from({ length: 6 }).map((_, index) => <tr key={index}><td className="px-5 py-4"><div className="flex items-center gap-3"><Skeleton className="size-9 rounded-full" /><div className="space-y-2"><Skeleton className="h-3 w-28" /><Skeleton className="h-2.5 w-36" /></div></div></td><td className="px-4"><Skeleton className="h-6 w-12 rounded-full" /></td><td className="px-4"><Skeleton className="h-6 w-12 rounded-full" /></td><td className="px-4"><Skeleton className="h-3 w-full max-w-sm" /></td><td><Skeleton className="mx-auto size-8 rounded-lg" /></td><td><Skeleton className="mx-auto size-8 rounded-lg" /></td></tr>)}</>;
-}
-
-function StatePanel({ icon, title, description, children }: { icon: React.ReactNode; title: string; description: string; children: React.ReactNode }) {
-  return <div className="flex flex-col items-center border-t px-6 py-16 text-center"><span className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted text-[#667085]">{icon}</span><h3 className="font-semibold">{title}</h3><p className="mb-5 mt-1 max-w-md text-sm text-[#667085]">{description}</p>{children}</div>;
 }
 
 function formatDate(value: string) {

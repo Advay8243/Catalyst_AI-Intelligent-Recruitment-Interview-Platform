@@ -28,8 +28,11 @@ class Job(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(255), index=True)
     company: Mapped[Optional[str]] = mapped_column(String(255))
+    department: Mapped[Optional[str]] = mapped_column(String(255))
+    location: Mapped[Optional[str]] = mapped_column(String(255))
+    employment_type: Mapped[Optional[str]] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
 
     requirements: Mapped["JobRequirement"] = relationship(
         back_populates="job", cascade="all, delete-orphan", uselist=False
@@ -72,7 +75,10 @@ class Resume(Base, TimestampMixin):
     filename: Mapped[str] = mapped_column(String(255))
     mime_type: Mapped[str] = mapped_column(String(128))
     storage_key: Mapped[str] = mapped_column(String(512), unique=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     parsed_data: Mapped[dict[str, Any]] = mapped_column(json_type)
+    parse_corrected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    parse_corrected_by: Mapped[Optional[str]] = mapped_column(String(255))
 
     candidate: Mapped[Candidate] = relationship(back_populates="resumes")
     analyses: Mapped[list["ResumeAnalysis"]] = relationship(back_populates="resume")

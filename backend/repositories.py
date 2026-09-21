@@ -27,7 +27,7 @@ class JobRepository:
         self.db.commit()
         return self.get(job.id)  # type: ignore[return-value]
 
-    def list(self, offset: int, limit: int) -> list[Job]:
+    def list(self, offset: int, limit: int, status: str | None = None) -> list[Job]:
         stmt = (
             select(Job)
             .options(joinedload(Job.requirements))
@@ -35,6 +35,8 @@ class JobRepository:
             .offset(offset)
             .limit(limit)
         )
+        if status:
+            stmt = stmt.where(Job.status == status)
         return list(self.db.scalars(stmt).unique())
 
     def get(self, job_id: uuid.UUID) -> Job | None:
@@ -75,6 +77,8 @@ class CandidateRepository:
         min_score: int | None,
         sort: str,
         order: str,
+        max_score: int | None = None,
+        screening_status: str | None = None,
     ) -> tuple[list[tuple], int]:
         hr_score = (
             select(HRScreeningAnalysis.overall_score)
@@ -145,6 +149,7 @@ class CandidateRepository:
                 Application.status,
                 ResumeAnalysis.overall_score,
                 ResumeAnalysis.explanation,
+                ResumeAnalysis.scoring,
                 Application.job_id,
                 Job.title,
                 hr_score.label("hr_score"),
@@ -178,6 +183,38 @@ class CandidateRepository:
             stmt = stmt.where(Application.status == status)
         if min_score is not None:
             stmt = stmt.where(ResumeAnalysis.overall_score >= min_score)
+        if max_score is not None:
+            stmt = stmt.where(ResumeAnalysis.overall_score <= max_score)
+        if screening_status:
+            completed_exists = (
+                select(CallSession.id)
+                .where(
+                    CallSession.application_id == Application.id,
+                    CallSession.status == "completed",
+                )
+                .exists()
+            )
+            in_progress_exists = (
+                select(CallSession.id)
+                .where(
+                    CallSession.application_id == Application.id,
+                    CallSession.status != "completed",
+                )
+                .exists()
+            )
+            key = screening_status.lower().replace(" ", "_")
+            if key in {"not_screened", "pending"}:
+                stmt = stmt.where(~in_progress_exists, ~completed_exists, Application.decision.is_(None))
+            elif key in {"screening_in_progress", "in_progress"}:
+                stmt = stmt.where(in_progress_exists, ~completed_exists)
+            elif key in {"awaiting_hr_decision", "hr_screened", "screened"}:
+                stmt = stmt.where(completed_exists, Application.decision.is_(None))
+            elif key == "needs_review":
+                stmt = stmt.where(Application.decision == "needs_review")
+            elif key in {"accepted", "advanced"}:
+                stmt = stmt.where(Application.decision.in_(("accepted", "advanced")))
+            elif key == "rejected":
+                stmt = stmt.where(Application.decision == "rejected")
         total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         column = hr_score if sort == "hr_score" else self.SORT_COLUMNS[sort]
         ordering = column.desc() if order == "desc" else column.asc()
