@@ -3,6 +3,12 @@ export type ScoreBreakdown = {
   experience?: number;
   education?: number;
   relevance?: number;
+  required_skills?: number;
+  preferred_skills?: number;
+  responsibilities?: number;
+  education_certification?: number;
+  matched_skills?: string[];
+  missing_skills?: string[];
   summary?: string;
 };
 
@@ -36,11 +42,58 @@ export type Candidate = {
   currentStage?: string;
 };
 
+export type JobStatus = "draft" | "published" | "archived";
+
+export type JobRequirements = {
+  title?: string;
+  department?: string;
+  location?: string;
+  employment_type?: string;
+  experience_required?: string;
+  required_skills?: string[];
+  preferred_skills?: string[];
+  responsibilities?: string[];
+  education?: string[];
+  certifications?: string[];
+  minimum_years_experience?: number;
+};
+
 export type Job = {
   id: string;
   title: string;
+  company?: string;
   department?: string;
+  location?: string;
+  employment_type?: string;
+  description?: string;
+  status?: JobStatus | string;
+  created_at?: string;
+  updated_at?: string;
+  application_count?: number;
+  requirements?: {
+    id?: string;
+    structured_data?: JobRequirements;
+  };
 };
+
+export type JobParsePreview = {
+  description: string;
+  extracted: JobRequirements;
+  editable: JobRequirements;
+};
+
+export type BatchResumeResult = {
+  job_id: string;
+  results: Array<{
+    filename: string;
+    status: "success" | "failed" | "duplicate";
+    message?: string;
+  }>;
+  success_count: number;
+  failure_count: number;
+  duplicate_count: number;
+};
+
 
 export type CandidateQuery = {
   page: number;
@@ -48,7 +101,9 @@ export type CandidateQuery = {
   search?: string;
   jobId?: string;
   status?: string;
+  screeningStatus?: string;
   minScore?: string;
+  maxScore?: string;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 };
@@ -179,17 +234,35 @@ export type CandidateReview = {
     filename: string;
     mime_type: string;
     parsed_data: {
+      full_name?: string;
+      email?: string;
+      phone?: string;
       skills?: string[];
       years_experience?: number;
       education?: string[];
+      certifications?: string[];
       highlights?: string[];
       projects?: string[];
+      employment_history?: string[];
     };
     uploaded_at: string;
+    parse_corrected_at?: string;
+    parse_corrected_by?: string;
   };
   resume_analysis: {
     overall_score: number;
-    scoring: Record<string, { score?: number; explanation?: string; evidence?: string[] }>;
+    scoring: Record<
+      string,
+      | { score?: number; explanation?: string; evidence?: string[] }
+      | {
+          matched_skills?: string[];
+          missing_skills?: string[];
+          required_skill_score?: number;
+          preferred_skill_score?: number;
+          responsibilities_score?: number;
+          education_certification_score?: number;
+        }
+    >;
     evidence: Record<string, string[]>;
     explanation: string;
   };
@@ -243,4 +316,40 @@ export type EmailDraft = {
   email_type: EmailType;
   status: string;
   created_at: string;
+};
+
+export type DashboardStats = {
+  total_candidates: number;
+  pending_hr_screening: number;
+  hr_screened: number;
+  needs_review: number;
+  accepted: number;
+  rejected: number;
+  emails_sent: number;
+  active_job_descriptions: number;
+  average_jd_resume_score: number | null;
+  average_hr_screening_score: number | null;
+  candidates_per_job: Array<{
+    job_id: string;
+    title: string;
+    status: string;
+    candidate_count: number;
+  }>;
+  job_id?: string | null;
+};
+
+export type DashboardActivity = {
+  items: Array<{
+    id: string;
+    event_type: string;
+    title: string;
+    description: string;
+    timestamp: string;
+    actor?: string | null;
+    candidate_id?: string | null;
+    candidate_name?: string | null;
+    job_id?: string | null;
+    job_title?: string | null;
+  }>;
+  job_id?: string | null;
 };

@@ -12,7 +12,9 @@ class AIProvider(ABC):
     """Provider boundary for structured AI operations."""
 
     @abstractmethod
-    def parse_job_description(self, text: str) -> JDRequirements:
+    def parse_job_description(
+        self, text: str, title: str | None = None
+    ) -> JDRequirements:
         raise NotImplementedError
 
     @abstractmethod

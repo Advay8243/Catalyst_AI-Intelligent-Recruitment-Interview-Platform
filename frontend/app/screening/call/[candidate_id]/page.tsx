@@ -27,7 +27,7 @@ import type {
   ScreeningAnalysis,
   TranscriptEntry,
 } from "@/lib/types";
-import { initials } from "@/lib/utils";
+import { formatAiRecommendation, initials, scoreTextClass } from "@/lib/utils";
 
 const statusLabel: Record<string, string> = {
   not_started: "Not Started",
@@ -339,9 +339,9 @@ function AnalysisPanel({ analysis }: { analysis: ScreeningAnalysis }) {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-semibold">HR Screening Score</h2>
-          <p className="mt-1 text-xs capitalize text-[#667085]">{analysis.recommendation.replaceAll("_", " ")}</p>
+          <p className="mt-1 text-xs text-[#667085]">{formatAiRecommendation(analysis.recommendation)}</p>
         </div>
-        <span className="text-3xl font-bold text-primary">{analysis.overall_score}%</span>
+        <span className={`text-3xl font-bold ${scoreTextClass(analysis.overall_score)}`}>{analysis.overall_score}%</span>
       </div>
       <div className="mt-5 space-y-3">
         {[

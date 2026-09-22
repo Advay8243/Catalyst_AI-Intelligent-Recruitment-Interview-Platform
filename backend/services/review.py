@@ -121,6 +121,8 @@ class CandidateReviewService:
                 "mime_type": resume.mime_type,
                 "parsed_data": resume.parsed_data,
                 "uploaded_at": resume.created_at,
+                "parse_corrected_at": resume.parse_corrected_at,
+                "parse_corrected_by": resume.parse_corrected_by,
             },
             resume_analysis={
                 "overall_score": resume_analysis.overall_score,
@@ -358,7 +360,9 @@ class CandidateReviewService:
                 "Proposed timing: [DATE / TIME OPTIONS]\n"
                 "Additional information: [DETAILS]\n\n"
                 "Please reply with your availability, and our recruiting team will coordinate "
-                "the details.\n\nBest,\nCatalyst AI Recruiting"
+                "the details.\n\n"
+                f"Recruiter contact: {actor}\n\n"
+                "Best,\nCatalyst AI Recruiting"
             )
             draft_recipient = target_recipient
         elif email_type == "rejected":
@@ -593,6 +597,7 @@ class CandidateReviewService:
             "candidate_created": "Candidate Created",
             "resume_uploaded": "Resume Uploaded",
             "resume_analyzed": "Resume Analyzed",
+            "resume_parse_corrected": "Resume Parse Corrected",
             "screening_started": "HR Screening Started",
             "screening_completed": "HR Screening Completed",
             "decision_requested": "Decision Requested",

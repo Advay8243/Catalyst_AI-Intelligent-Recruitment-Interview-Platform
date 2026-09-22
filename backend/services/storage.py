@@ -12,6 +12,10 @@ class FileStorage(ABC):
     def read(self, key: str) -> bytes:
         raise NotImplementedError
 
+    @abstractmethod
+    def delete(self, key: str) -> None:
+        raise NotImplementedError
+
 
 class LocalFileStorage(FileStorage):
     def __init__(self, root: str) -> None:
@@ -27,3 +31,8 @@ class LocalFileStorage(FileStorage):
     def read(self, key: str) -> bytes:
         safe_key = Path(key).name
         return (self.root / safe_key).read_bytes()
+
+    def delete(self, key: str) -> None:
+        path = self.root / Path(key).name
+        if path.exists():
+            path.unlink()

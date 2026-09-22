@@ -60,8 +60,9 @@ describe("ScreeningClient", () => {
     const user = userEvent.setup();
     render(<ScreeningClient />);
     await user.click(await screen.findByRole("button", { name: "JD score for Maya Chen" }));
-    expect(await screen.findByRole("dialog")).toHaveTextContent("JD → Resume Score");
-    expect(screen.getByText("Skills match")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("JD → Resume Score");
+    expect(within(dialog).getByText("Required skills")).toBeInTheDocument();
     expect(screen.getByText("92%")).toBeInTheDocument();
   });
 
@@ -80,7 +81,7 @@ describe("ScreeningClient", () => {
     const user = userEvent.setup();
     render(<ScreeningClient />);
     await screen.findByText("Maya Chen");
-    await user.selectOptions(screen.getByLabelText("Filter by status"), "ADVANCED");
+    await user.selectOptions(screen.getByLabelText("Filter by decision status"), "ADVANCED");
     await user.selectOptions(screen.getByLabelText("Minimum score"), "80");
     await user.selectOptions(screen.getByLabelText("Sort candidates"), "name");
     await waitFor(() => {
@@ -99,7 +100,29 @@ describe("ScreeningClient", () => {
   it("opens candidate review from the email status", async () => {
     const user = userEvent.setup();
     render(<ScreeningClient />);
+    expect(await screen.findByText("✉ Not Sent")).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Email history for Maya Chen" }));
     expect(push).toHaveBeenCalledWith("/screening/candidates/cand-1");
+  });
+
+  it("colors JD and HR scores using the configured thresholds", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/jobs")) return json({ items: [{ id: "job-1", title: "Lead Product Designer" }] });
+      return json({
+        items: [
+          { ...candidate, id: "high", name: "High Scorer", jdScore: 92, hrScore: 90 },
+          { ...candidate, id: "mid", name: "Mid Scorer", jdScore: 70, hrScore: 65 },
+          { ...candidate, id: "low", name: "Low Scorer", jdScore: 40, hrScore: 50 },
+        ],
+        total: 3,
+        page: 1,
+        pageSize: 10,
+      });
+    }));
+    render(<ScreeningClient />);
+    expect(await screen.findByText("92%")).toHaveClass("text-[#027a48]");
+    expect(screen.getByText("70%")).toHaveClass("text-[#b54708]");
+    expect(screen.getByText("40%")).toHaveClass("text-[#b42318]");
   });
 });

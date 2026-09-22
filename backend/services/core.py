@@ -1,24 +1,31 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from backend.config import Settings
 from backend.models import Application, Candidate, Job, JobRequirement, Resume, ResumeAnalysis
 from backend.repositories import CandidateRepository, JobRepository
 from backend.schemas import (
+    BatchResumeItemResult,
+    BatchResumeUploadResult,
     CandidateListItem,
     JDRequirements,
     JobCreate,
+    JobUpdate,
     MatchResult,
     Page,
     ParsedResume,
+    ResumeParseCorrection,
+    ScoreBreakdown,
 )
 from backend.services.ai.ai_provider import AIProvider
 from backend.services.audit import record_audit
-from backend.services.documents import parser_for
+from backend.services.documents import parser_for, sanitize_filename
 from backend.services.storage import FileStorage
 
 
@@ -30,20 +37,126 @@ class ConflictError(Exception):
     pass
 
 
+def _years_from_experience(text: str | None) -> int:
+    if not text:
+        return 0
+    import re
+
+    match = re.search(r"(\d+)", text)
+    return int(match.group(1)) if match else 0
+
+
+def _merge_requirements(
+    base: JDRequirements, payload: JobCreate | JobUpdate, *, title: str | None = None
+) -> JDRequirements:
+    data = base.model_dump()
+    overrides = payload.model_dump(exclude_unset=True)
+    scalar_fields = (
+        "title",
+        "department",
+        "location",
+        "employment_type",
+        "experience_required",
+    )
+    list_fields = (
+        "required_skills",
+        "preferred_skills",
+        "responsibilities",
+        "education",
+        "certifications",
+    )
+    for key in scalar_fields:
+        if key in overrides and overrides[key] is not None:
+            data[key] = overrides[key]
+    for key in list_fields:
+        if key in overrides and overrides[key]:
+            data[key] = overrides[key]
+    if title:
+        data["title"] = title
+    if data.get("experience_required"):
+        data["minimum_years_experience"] = _years_from_experience(
+            data.get("experience_required")
+        )
+    return JDRequirements.model_validate(data)
+
+
 class JobService:
     def __init__(self, db: Session, ai: AIProvider) -> None:
+        self.db = db
         self.repo = JobRepository(db)
         self.ai = ai
 
+    def parse_preview(self, description: str, title: str | None = None) -> JDRequirements:
+        if len(description.strip()) < 20:
+            raise ValueError("Job description must be at least 20 characters")
+        return self.ai.parse_job_description(description, title=title)
+
     def create(self, payload: JobCreate) -> Job:
-        parsed = self.ai.parse_job_description(payload.description)
-        job = Job(
-            title=payload.title or parsed.title,
-            company=payload.company,
-            description=payload.description,
+        parsed = self.ai.parse_job_description(payload.description, title=payload.title)
+        requirements = _merge_requirements(
+            parsed, payload, title=payload.title or parsed.title
         )
-        requirement = JobRequirement(structured_data=parsed.model_dump(mode="json"))
+        job = Job(
+            title=requirements.title,
+            company=payload.company,
+            department=payload.department or requirements.department,
+            location=payload.location or requirements.location,
+            employment_type=payload.employment_type or requirements.employment_type,
+            description=payload.description,
+            status=payload.status,
+        )
+        requirement = JobRequirement(structured_data=requirements.model_dump(mode="json"))
         return self.repo.create(job, requirement)
+
+    def update(self, job_id: uuid.UUID, payload: JobUpdate) -> Job:
+        job = self.get(job_id)
+        if payload.description is not None:
+            job.description = payload.description
+            parsed = self.ai.parse_job_description(payload.description, title=payload.title)
+        else:
+            parsed = JDRequirements.model_validate(job.requirements.structured_data)
+        requirements = _merge_requirements(
+            parsed, payload, title=payload.title or job.title
+        )
+        if payload.title is not None:
+            job.title = payload.title
+        else:
+            job.title = requirements.title
+        for field in ("company", "department", "location", "employment_type", "status"):
+            value = getattr(payload, field)
+            if value is not None:
+                setattr(job, field, value)
+        if not job.department:
+            job.department = requirements.department
+        if not job.location:
+            job.location = requirements.location
+        if not job.employment_type:
+            job.employment_type = requirements.employment_type
+        job.requirements.structured_data = requirements.model_dump(mode="json")
+        self.db.commit()
+        return self.get(job_id)
+
+    def set_status(self, job_id: uuid.UUID, status: str) -> Job:
+        if status not in {"draft", "published", "archived"}:
+            raise ValueError("Invalid job status")
+        job = self.get(job_id)
+        job.status = status
+        self.db.commit()
+        return self.get(job_id)
+
+    def delete(self, job_id: uuid.UUID) -> None:
+        job = self.get(job_id)
+        application_count = self.db.scalar(
+            select(func.count())
+            .select_from(Application)
+            .where(Application.job_id == job_id)
+        ) or 0
+        if application_count:
+            job.status = "archived"
+            self.db.commit()
+            return
+        self.db.delete(job)
+        self.db.commit()
 
     def get(self, job_id: uuid.UUID) -> Job:
         job = self.repo.get(job_id)
@@ -51,8 +164,18 @@ class JobService:
             raise NotFoundError("Job not found")
         return job
 
-    def list(self, offset: int, limit: int) -> list[Job]:
-        return self.repo.list(offset, limit)
+    def list(self, offset: int, limit: int, status: str | None = None) -> list[Job]:
+        return self.repo.list(offset, limit, status=status)
+
+    def application_count(self, job_id: uuid.UUID) -> int:
+        return (
+            self.db.scalar(
+                select(func.count())
+                .select_from(Application)
+                .where(Application.job_id == job_id)
+            )
+            or 0
+        )
 
 
 class CandidateService:
@@ -76,14 +199,34 @@ class CandidateService:
         job = self.jobs.get(job_id)
         if not job or not job.requirements:
             raise NotFoundError("Job not found")
+        if job.status == "archived":
+            raise ValueError("Cannot upload resumes to an archived job")
+        safe_name = sanitize_filename(filename)
         if not content:
             raise ValueError("Uploaded file is empty")
         if len(content) > self.settings.max_upload_bytes:
             raise ValueError(
                 f"File exceeds maximum size of {self.settings.max_upload_bytes} bytes"
             )
-        document_parser = parser_for(filename, mime_type)
-        parsed = self.ai.parse_resume(document_parser.extract_text(content))
+        content_hash = hashlib.sha256(content).hexdigest()
+        duplicate_hash = self.db.scalar(
+            select(Resume.id)
+            .join(Application, Application.resume_id == Resume.id)
+            .where(
+                Application.job_id == job_id,
+                Resume.content_hash == content_hash,
+            )
+            .limit(1)
+        )
+        if duplicate_hash:
+            raise ConflictError("This resume file was already uploaded for this job")
+        document_parser = parser_for(safe_name, mime_type)
+        try:
+            parsed = self.ai.parse_resume(document_parser.extract_text(content))
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("Resume parsing failed. Please review the file and try again.") from exc
         candidate_was_new = self.db.scalar(
             select(Candidate.id).where(Candidate.email == str(parsed.email))
         ) is None
@@ -101,16 +244,20 @@ class CandidateService:
             )
         ):
             raise ConflictError("Candidate already applied to this job")
-        key = self.storage.save(filename, content)
+        key = self.storage.save(safe_name, content)
         resume = Resume(
             candidate_id=candidate.id,
-            filename=filename,
+            filename=safe_name,
             mime_type=mime_type,
             storage_key=key,
+            content_hash=content_hash,
             parsed_data=parsed.model_dump(mode="json"),
         )
         requirements = JDRequirements.model_validate(job.requirements.structured_data)
-        result = self.ai.match_resume(parsed, requirements, self.settings.scoring_weights)
+        try:
+            result = self.ai.match_resume(parsed, requirements, self.settings.scoring_weights)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("Matching failed for this resume.") from exc
         analysis = self._analysis(job_id, resume, result)
         application = Application(
             job_id=job_id, candidate_id=candidate.id, resume=resume, status="new"
@@ -130,8 +277,8 @@ class CandidateService:
             candidate_id=candidate.id,
             application_id=application.id,
             event_type="resume_uploaded",
-            description=f"Resume uploaded: {filename}.",
-            metadata={"resume_id": str(resume.id), "filename": filename},
+            description=f"Resume uploaded: {safe_name}.",
+            metadata={"resume_id": str(resume.id), "filename": safe_name},
         )
         record_audit(
             self.db,
@@ -139,6 +286,138 @@ class CandidateService:
             application_id=application.id,
             event_type="resume_analyzed",
             description=f"Resume analyzed against {job.title}.",
+            metadata={"overall_score": result.overall_score},
+        )
+        self.db.commit()
+        self.db.refresh(candidate)
+        self.db.refresh(analysis)
+        return candidate, analysis
+
+    def upload_resumes_batch(
+        self, job_id: uuid.UUID, files: list[tuple[str, str, bytes]]
+    ) -> BatchResumeUploadResult:
+        results: list[BatchResumeItemResult] = []
+        success = failure = duplicate = 0
+        for filename, mime_type, content in files:
+            try:
+                candidate, analysis = self.upload_resume(
+                    job_id, filename, mime_type, content
+                )
+                results.append(
+                    BatchResumeItemResult(
+                        filename=filename,
+                        status="success",
+                        candidate=candidate,
+                        analysis=analysis,
+                    )
+                )
+                success += 1
+            except ConflictError as exc:
+                duplicate += 1
+                results.append(
+                    BatchResumeItemResult(
+                        filename=filename,
+                        status="duplicate",
+                        message=str(exc),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate batch failures
+                failure += 1
+                results.append(
+                    BatchResumeItemResult(
+                        filename=filename,
+                        status="failed",
+                        message=str(exc),
+                    )
+                )
+        return BatchResumeUploadResult(
+            job_id=job_id,
+            results=results,
+            success_count=success,
+            failure_count=failure,
+            duplicate_count=duplicate,
+        )
+
+    def correct_parsed_resume(
+        self,
+        candidate_id: uuid.UUID,
+        payload: ResumeParseCorrection,
+        actor: str,
+    ) -> tuple[Candidate, ResumeAnalysis]:
+        application = self.db.scalar(
+            select(Application)
+            .where(
+                Application.candidate_id == candidate_id,
+                Application.job_id == payload.job_id,
+            )
+            .limit(1)
+        )
+        if not application:
+            raise NotFoundError("Candidate application not found")
+        resume = application.resume
+        job = application.job
+        current = ParsedResume.model_validate(resume.parsed_data)
+        updates = payload.model_dump(exclude_unset=True, exclude={"job_id"})
+        data = current.model_dump()
+        for key, value in updates.items():
+            if value is not None:
+                data[key] = value
+        corrected = ParsedResume.model_validate(data)
+        resume.parsed_data = corrected.model_dump(mode="json")
+        resume.parse_corrected_at = datetime.now(timezone.utc)
+        resume.parse_corrected_by = actor
+        candidate = application.candidate
+        candidate.full_name = corrected.full_name
+        candidate.email = str(corrected.email)
+        candidate.phone = corrected.phone
+        candidate.profile = corrected.model_dump(mode="json")
+        requirements = JDRequirements.model_validate(job.requirements.structured_data)
+        result = self.ai.match_resume(
+            corrected, requirements, self.settings.scoring_weights
+        )
+        analysis = self.db.scalar(
+            select(ResumeAnalysis).where(
+                ResumeAnalysis.resume_id == resume.id,
+                ResumeAnalysis.job_id == job.id,
+            )
+        )
+        if not analysis:
+            raise NotFoundError("Resume analysis not found")
+        analysis.overall_score = result.overall_score
+        analysis.scoring = {
+            name: category.model_dump(mode="json")
+            for name, category in result.categories.items()
+        }
+        analysis.scoring["match_details"] = {
+            "matched_skills": result.matched_skills,
+            "missing_skills": result.missing_skills,
+            "required_skill_score": result.required_skill_score,
+            "preferred_skill_score": result.preferred_skill_score,
+            "responsibilities_score": result.responsibilities_score,
+            "education_certification_score": result.education_certification_score,
+        }
+        analysis.evidence = {
+            name: category.evidence for name, category in result.categories.items()
+        }
+        analysis.evidence["matched_skills"] = result.matched_skills
+        analysis.evidence["missing_skills"] = result.missing_skills
+        analysis.explanation = result.explanation
+        record_audit(
+            self.db,
+            candidate_id=candidate.id,
+            application_id=application.id,
+            event_type="resume_parse_corrected",
+            actor=actor,
+            description="HR corrected parsed resume information.",
+            metadata={"resume_id": str(resume.id)},
+        )
+        record_audit(
+            self.db,
+            candidate_id=candidate.id,
+            application_id=application.id,
+            event_type="resume_analyzed",
+            actor=actor,
+            description=f"Resume re-analyzed against {job.title} after human correction.",
             metadata={"overall_score": result.overall_score},
         )
         self.db.commit()
@@ -154,9 +433,19 @@ class CandidateService:
             name: category.model_dump(mode="json")
             for name, category in result.categories.items()
         }
+        scoring["match_details"] = {
+            "matched_skills": result.matched_skills,
+            "missing_skills": result.missing_skills,
+            "required_skill_score": result.required_skill_score,
+            "preferred_skill_score": result.preferred_skill_score,
+            "responsibilities_score": result.responsibilities_score,
+            "education_certification_score": result.education_certification_score,
+        }
         evidence = {
             name: category.evidence for name, category in result.categories.items()
         }
+        evidence["matched_skills"] = result.matched_skills
+        evidence["missing_skills"] = result.missing_skills
         return ResumeAnalysis(
             resume=resume,
             job_id=job_id,
@@ -164,6 +453,25 @@ class CandidateService:
             scoring=scoring,
             evidence=evidence,
             explanation=result.explanation,
+        )
+
+    @staticmethod
+    def _score_breakdown(scoring: dict | None, explanation: str | None) -> ScoreBreakdown | None:
+        if not scoring:
+            return None
+        details = scoring.get("match_details") or {}
+        return ScoreBreakdown(
+            skills=(scoring.get("skills") or {}).get("score"),
+            experience=(scoring.get("experience") or {}).get("score"),
+            education=(scoring.get("education") or {}).get("score"),
+            relevance=(scoring.get("industry") or {}).get("score"),
+            required_skills=details.get("required_skill_score"),
+            preferred_skills=details.get("preferred_skill_score"),
+            responsibilities=details.get("responsibilities_score"),
+            education_certification=details.get("education_certification_score"),
+            matched_skills=list(details.get("matched_skills") or []),
+            missing_skills=list(details.get("missing_skills") or []),
+            summary=explanation,
         )
 
     def get(self, candidate_id: uuid.UUID):
@@ -175,13 +483,25 @@ class CandidateService:
     def list_for_job(self, job_id: uuid.UUID, **filters) -> Page:
         if not self.jobs.get(job_id):
             raise NotFoundError("Job not found")
-        rows, total = self.candidates.list_for_job(job_id=job_id, **filters)
+        rows, total = self.candidates.list_for_job(
+            job_id=job_id,
+            page=filters["page"],
+            page_size=filters["page_size"],
+            search=filters.get("search"),
+            status=filters.get("status"),
+            min_score=filters.get("min_score"),
+            max_score=filters.get("max_score"),
+            screening_status=filters.get("screening_status"),
+            sort=filters["sort"],
+            order=filters["order"],
+        )
         items = []
         for (
             candidate,
             status,
             jd_score,
             explanation,
+            scoring,
             candidate_job_id,
             job_title,
             hr_score,
@@ -240,6 +560,7 @@ class CandidateService:
                     decision_status=decision or "pending",
                     email_status=email_status or "Not Sent",
                     current_stage=current_stage,
+                    score_breakdown=self._score_breakdown(scoring, explanation),
                 )
             )
         return Page(
@@ -256,3 +577,83 @@ class CandidateService:
         if not analysis:
             raise NotFoundError("Resume analysis not found")
         return analysis
+
+    def remove_application(
+        self,
+        candidate_id: uuid.UUID,
+        job_id: uuid.UUID,
+        actor: str | None = None,
+    ) -> None:
+        from backend.calling_models import CallSession, HRScreeningAnalysis, TranscriptEntry
+        from backend.models import AuditEvent, DecisionHistory, EmailHistory
+
+        application = self.db.scalar(
+            select(Application).where(
+                Application.candidate_id == candidate_id,
+                Application.job_id == job_id,
+            )
+        )
+        if not application:
+            raise NotFoundError("Candidate application not found")
+        resume = application.resume
+        resume_id = resume.id
+        storage_key = resume.storage_key
+        filename = resume.filename
+        application_id = application.id
+
+        call_ids = list(
+            self.db.scalars(
+                select(CallSession.id).where(CallSession.application_id == application_id)
+            )
+        )
+        if call_ids:
+            self.db.execute(
+                delete(TranscriptEntry).where(TranscriptEntry.call_session_id.in_(call_ids))
+            )
+            self.db.execute(
+                delete(HRScreeningAnalysis).where(
+                    HRScreeningAnalysis.call_session_id.in_(call_ids)
+                )
+            )
+            self.db.execute(delete(CallSession).where(CallSession.id.in_(call_ids)))
+
+        self.db.execute(
+            delete(EmailHistory).where(EmailHistory.application_id == application_id)
+        )
+        self.db.execute(
+            delete(DecisionHistory).where(DecisionHistory.application_id == application_id)
+        )
+        self.db.execute(
+            delete(AuditEvent).where(AuditEvent.application_id == application_id)
+        )
+        self.db.execute(
+            delete(ResumeAnalysis).where(
+                ResumeAnalysis.resume_id == resume_id,
+                ResumeAnalysis.job_id == job_id,
+            )
+        )
+        self.db.delete(application)
+        self.db.flush()
+
+        other_apps = self.db.scalar(
+            select(func.count())
+            .select_from(Application)
+            .where(Application.resume_id == resume_id)
+        ) or 0
+        if other_apps == 0:
+            self.db.delete(resume)
+            try:
+                self.storage.delete(storage_key)
+            except Exception:  # noqa: BLE001 - storage cleanup is best-effort
+                pass
+
+        record_audit(
+            self.db,
+            candidate_id=candidate_id,
+            application_id=None,
+            event_type="resume_removed",
+            actor=actor,
+            description=f"Resume removed for re-upload: {filename}.",
+            metadata={"resume_id": str(resume_id), "job_id": str(job_id)},
+        )
+        self.db.commit()

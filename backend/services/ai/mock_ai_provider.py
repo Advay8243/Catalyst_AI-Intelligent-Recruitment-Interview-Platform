@@ -20,8 +20,10 @@ class MockAIProvider(AIProvider):
         self.matcher = ResumeMatcher()
         self.screening_analyzer = MockScreeningAnalyzer()
 
-    def parse_job_description(self, text: str) -> JDRequirements:
-        return self.jd_parser.parse(text)
+    def parse_job_description(
+        self, text: str, title: str | None = None
+    ) -> JDRequirements:
+        return self.jd_parser.parse(text, title=title)
 
     def parse_resume(self, text: str) -> ParsedResume:
         return self.resume_parser.parse(text)

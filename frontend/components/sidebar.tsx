@@ -20,10 +20,10 @@ import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 const navigation = [
-  { name: "Overview", icon: LayoutDashboard, href: "#", pending: true },
+  { name: "Overview", icon: LayoutDashboard, href: "/overview" },
   { name: "Candidate Screening", icon: FileSearch, href: "/screening" },
-  { name: "Candidates", icon: Users, href: "#", pending: true },
-  { name: "Jobs", icon: BriefcaseBusiness, href: "#", pending: true },
+  { name: "Candidates", icon: Users, href: "/screening", pending: false },
+  { name: "Jobs", icon: BriefcaseBusiness, href: "/jobs" },
   { name: "Online Assessment", icon: ClipboardCheck, href: "#", pending: true },
   { name: "Analytics", icon: BarChart3, href: "#", pending: true },
 ];

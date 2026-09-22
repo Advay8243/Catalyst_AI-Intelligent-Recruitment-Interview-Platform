@@ -1,13 +1,19 @@
 import type {
+  BatchResumeResult,
   CallSession,
   Candidate,
   CandidateQuery,
   CandidateReview,
+  DashboardActivity,
+  DashboardStats,
   Decision,
   EmailDraft,
   EmailHistoryItem,
   EmailType,
   Job,
+  JobParsePreview,
+  JobRequirements,
+  JobStatus,
   PaginatedCandidates,
   ScreeningAnalysis,
   TranscriptEntry,
@@ -61,7 +67,23 @@ function normalizeCandidate(raw: Record<string, unknown>): Candidate {
     jobTitle: raw.jobTitle ? String(raw.jobTitle) : raw.job_title ? String(raw.job_title) : undefined,
     resumeUrl: raw.resumeUrl ? String(raw.resumeUrl) : raw.resume_url ? String(raw.resume_url) : undefined,
     skills: Array.isArray(raw.skills) ? raw.skills.map(String) : [],
-    scoreBreakdown: (raw.scoreBreakdown ?? raw.score_breakdown) as Candidate["scoreBreakdown"],
+    scoreBreakdown: (() => {
+      const rawBreakdown = (raw.scoreBreakdown ?? raw.score_breakdown) as Record<string, unknown> | undefined;
+      if (!rawBreakdown || typeof rawBreakdown !== "object") return undefined;
+      return {
+        skills: rawBreakdown.skills != null ? Number(rawBreakdown.skills) : undefined,
+        experience: rawBreakdown.experience != null ? Number(rawBreakdown.experience) : undefined,
+        education: rawBreakdown.education != null ? Number(rawBreakdown.education) : undefined,
+        relevance: rawBreakdown.relevance != null ? Number(rawBreakdown.relevance) : undefined,
+        required_skills: rawBreakdown.required_skills != null ? Number(rawBreakdown.required_skills) : undefined,
+        preferred_skills: rawBreakdown.preferred_skills != null ? Number(rawBreakdown.preferred_skills) : undefined,
+        responsibilities: rawBreakdown.responsibilities != null ? Number(rawBreakdown.responsibilities) : undefined,
+        education_certification: rawBreakdown.education_certification != null ? Number(rawBreakdown.education_certification) : undefined,
+        matched_skills: Array.isArray(rawBreakdown.matched_skills) ? rawBreakdown.matched_skills.map(String) : [],
+        missing_skills: Array.isArray(rawBreakdown.missing_skills) ? rawBreakdown.missing_skills.map(String) : [],
+        summary: rawBreakdown.summary ? String(rawBreakdown.summary) : undefined,
+      };
+    })(),
     hrAnalysis: raw.hrAnalysis ? String(raw.hrAnalysis) : raw.hr_analysis ? String(raw.hr_analysis) : undefined,
     resumeStatus: raw.resumeStatus ? String(raw.resumeStatus) : raw.resume_status ? String(raw.resume_status) : undefined,
     screeningStatus: raw.screeningStatus ? String(raw.screeningStatus) : raw.screening_status ? String(raw.screening_status) : undefined,
@@ -84,7 +106,9 @@ export async function getCandidates(query: CandidateQuery): Promise<PaginatedCan
   params.set("page_size", String(query.pageSize));
   if (query.search) params.set("search", query.search);
   if (query.status) params.set("status", query.status);
+  if (query.screeningStatus) params.set("screening_status", query.screeningStatus);
   if (query.minScore) params.set("min_score", query.minScore);
+  if (query.maxScore) params.set("max_score", query.maxScore);
   const sortMap: Record<string, string> = {
     jdScore: "score",
     hrScore: "hr_score",
@@ -158,6 +182,89 @@ export async function createJobFromDescription(description: string): Promise<Job
   });
 }
 
+export async function parseJobDescription(input: {
+  description?: string;
+  title?: string;
+  file?: File;
+}): Promise<JobParsePreview> {
+  if (input.file) {
+    const form = new FormData();
+    form.append("file", input.file);
+    if (input.title) form.append("title", input.title);
+    return uploadFiles("/jobs/parse", form, () => undefined) as Promise<JobParsePreview>;
+  }
+  return request<JobParsePreview>("/jobs/parse", {
+    method: "POST",
+    body: JSON.stringify({
+      description: input.description,
+      title: input.title,
+    }),
+  });
+}
+
+export async function createJob(payload: {
+  description: string;
+  title?: string;
+  company?: string;
+  department?: string;
+  location?: string;
+  employment_type?: string;
+  experience_required?: string;
+  required_skills?: string[];
+  preferred_skills?: string[];
+  responsibilities?: string[];
+  education?: string[];
+  certifications?: string[];
+  status?: JobStatus;
+}): Promise<Job> {
+  return request<Job>("/jobs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateJob(
+  jobId: string,
+  payload: Partial<{
+    title: string;
+    company: string;
+    department: string;
+    location: string;
+    employment_type: string;
+    experience_required: string;
+    description: string;
+    required_skills: string[];
+    preferred_skills: string[];
+    responsibilities: string[];
+    education: string[];
+    certifications: string[];
+    status: JobStatus;
+  }>,
+): Promise<Job> {
+  return request<Job>(`/jobs/${encodeURIComponent(jobId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function publishJob(jobId: string): Promise<Job> {
+  return request<Job>(`/jobs/${encodeURIComponent(jobId)}/publish`, { method: "POST" });
+}
+
+export async function archiveJob(jobId: string): Promise<Job> {
+  return request<Job>(`/jobs/${encodeURIComponent(jobId)}/archive`, { method: "POST" });
+}
+
+export async function deleteJob(jobId: string): Promise<void> {
+  const response = await fetch(`${API_URL}/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok && response.status !== 204) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail ?? `Delete failed (${response.status})`);
+  }
+}
+
 export async function uploadJobDescriptionFile(
   file: File,
   onProgress: (percent: number) => void,
@@ -176,6 +283,73 @@ export async function uploadResumeToJob(
   form.append("file", file);
   return uploadFiles(`/jobs/${encodeURIComponent(jobId)}/resume`, form, onProgress);
 }
+
+export async function uploadResumesBatch(
+  jobId: string,
+  files: File[],
+  onProgress: (percent: number) => void,
+): Promise<BatchResumeResult> {
+  const form = new FormData();
+  files.forEach((file) => form.append("files", file));
+  return uploadFiles(
+    `/jobs/${encodeURIComponent(jobId)}/resumes/batch`,
+    form,
+    onProgress,
+  ) as Promise<BatchResumeResult>;
+}
+
+export async function correctResumeParse(
+  candidateId: string,
+  jobId: string,
+  corrections: {
+    full_name?: string;
+    email?: string;
+    phone?: string;
+    skills?: string[];
+    years_experience?: number;
+    education?: string[];
+    certifications?: string[];
+    projects?: string[];
+    employment_history?: string[];
+    highlights?: string[];
+  },
+) {
+  return hrRequest<{
+    candidate: Record<string, unknown>;
+    analysis: Record<string, unknown>;
+    corrected_by: string;
+  }>(`/candidates/${encodeURIComponent(candidateId)}/resume-parse-correction`, {
+    method: "POST",
+    body: JSON.stringify({ job_id: jobId, ...corrections }),
+  });
+}
+
+export async function getDashboardStats(jobId?: string): Promise<DashboardStats> {
+  const params = jobId ? `?job_id=${encodeURIComponent(jobId)}` : "";
+  return request<DashboardStats>(`/dashboard/stats${params}`);
+}
+
+export async function getDashboardActivity(
+  jobId?: string,
+  limit = 20,
+): Promise<DashboardActivity> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (jobId) params.set("job_id", jobId);
+  return request<DashboardActivity>(`/dashboard/activity?${params}`);
+}
+
+export async function removeCandidateApplication(jobId: string, candidateId: string) {
+  const response = await fetch(
+    `${API_URL}/jobs/${encodeURIComponent(jobId)}/candidates/${encodeURIComponent(candidateId)}/application`,
+    { method: "DELETE" },
+  );
+  if (!response.ok && response.status !== 204) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail ?? `Remove failed (${response.status})`);
+  }
+}
+
+export type { JobRequirements };
 
 export async function createCallSession(candidateId: string, jobId?: string): Promise<CallSession> {
   return request<CallSession>(`/candidates/${encodeURIComponent(candidateId)}/call-sessions`, {

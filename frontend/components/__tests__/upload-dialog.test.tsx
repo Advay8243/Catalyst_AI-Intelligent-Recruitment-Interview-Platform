@@ -4,30 +4,39 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UploadDialog } from "@/components/upload-dialog";
 
-const opened: string[] = [];
+type MockXHR = {
+  upload: { onprogress: ((event: ProgressEvent) => void) | null };
+  open: ReturnType<typeof vi.fn>;
+  send: ReturnType<typeof vi.fn>;
+  status: number;
+  responseText: string;
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+};
 
 describe("UploadDialog", () => {
   beforeEach(() => {
-    opened.length = 0;
-    vi.stubGlobal("XMLHttpRequest", class {
-      status = 201;
-      responseText = JSON.stringify({
-        candidate: { id: "cand-1" },
-        analysis: { overall_score: 87 },
-      });
-      upload = { onprogress: null as ((event: ProgressEvent) => void) | null };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      open(_method: string, url: string) {
-        opened.push(url);
-      }
-      send() {
-        this.onload?.();
-      }
-    });
+    vi.stubGlobal(
+      "XMLHttpRequest",
+      vi.fn(function MockXHR(this: MockXHR) {
+        this.upload = { onprogress: null };
+        this.open = vi.fn();
+        this.send = vi.fn(() => {
+          this.status = 201;
+          this.responseText = JSON.stringify({
+            job_id: "job-1",
+            results: [{ filename: "alex.docx", status: "success" }],
+            success_count: 1,
+            failure_count: 0,
+            duplicate_count: 0,
+          });
+          this.onload?.();
+        });
+      }),
+    );
   });
 
-  it("posts resumes to the selected job resume endpoint", async () => {
+  it("posts resumes to the selected job batch endpoint", async () => {
     const user = userEvent.setup();
     const onComplete = vi.fn();
     const onNotice = vi.fn();
@@ -42,16 +51,20 @@ describe("UploadDialog", () => {
       />,
     );
 
-    const file = new File(["resume"], "jordan.docx", {
+    const file = new File(["resume"], "alex.docx", {
       type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
     await user.upload(screen.getByLabelText("Resume files"), file);
-    await user.click(screen.getByRole("button", { name: /upload & analyze/i }));
+    await user.click(screen.getByRole("button", { name: /Upload & analyze/i }));
 
     await waitFor(() => {
+      expect(XMLHttpRequest).toHaveBeenCalled();
+      const instance = vi.mocked(XMLHttpRequest).mock.results[0].value as MockXHR;
+      expect(instance.open).toHaveBeenCalledWith(
+        "POST",
+        expect.stringContaining("/jobs/job-1/resumes/batch"),
+      );
       expect(onComplete).toHaveBeenCalled();
-      expect(onNotice).toHaveBeenCalledWith("1 candidate created and analyzed.");
     });
-    expect(opened).toEqual(["http://localhost:8000/jobs/job-1/resume"]);
   });
 });

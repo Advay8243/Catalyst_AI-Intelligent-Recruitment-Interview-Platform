@@ -54,14 +54,16 @@ export function Badge({
   className,
 }: {
   children: React.ReactNode;
-  tone?: "gray" | "purple" | "green" | "amber" | "red";
+  tone?: "gray" | "purple" | "green" | "amber" | "red" | "emerald" | "orange";
   className?: string;
 }) {
   const tones = {
     gray: "bg-[#f2f4f7] text-[#667085]",
     purple: "bg-[#fff0f7] text-[#b00665]",
-    green: "bg-[#ecfdf3] text-[#027a48]",
+    green: "bg-[#ecfdf3] text-[#039855]",
+    emerald: "bg-[#dcfae6] text-[#027a48]",
     amber: "bg-[#fffaeb] text-[#b54708]",
+    orange: "bg-[#fff4ed] text-[#c4320a]",
     red: "bg-[#fef3f2] text-[#b42318]",
   };
   return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-semibold", tones[tone], className)}>{children}</span>;
