@@ -53,6 +53,11 @@ class QuestionAnalysis(BaseModel):
     score: int = Field(ge=0, le=100)
     evidence: list[str] = Field(default_factory=list)
     assessment: str
+    relevance: str | None = None
+    completeness: str | None = None
+    technical_evidence: list[str] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    suggested_follow_up: str | None = None
 
 
 class ScreeningAnalysisResult(BaseModel):

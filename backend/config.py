@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     upload_dir: str = "storage/uploads"
     hr_api_token: str | None = None
+    ai_provider: Literal["mock", "openai"] = "mock"
+    ai_api_key: str | None = None
+    ai_model: str = "gpt-4o-mini"
+    ai_base_url: str = "https://api.openai.com/v1"
+    ai_timeout_seconds: float = 30.0
+    ai_max_retries: int = 2
     scoring_weight_skills: int = 40
     scoring_weight_experience: int = 20
     scoring_weight_education: int = 20
@@ -32,6 +38,16 @@ class Settings(BaseSettings):
     def parse_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("ai_provider", mode="before")
+    @classmethod
+    def normalize_provider(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"real", "openai-compatible"}:
+                return "openai"
+            return normalized
         return value
 
     @property

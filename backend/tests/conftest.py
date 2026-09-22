@@ -28,6 +28,8 @@ def client(tmp_path) -> Generator[TestClient, None, None]:
         upload_dir=str(tmp_path / "uploads"),
         max_upload_bytes=1024 * 1024,
         hr_api_token=secrets.token_urlsafe(32),
+        ai_provider="mock",
+        ai_api_key=None,
     )
 
     def override_db() -> Generator[Session, None, None]:
