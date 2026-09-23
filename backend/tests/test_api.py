@@ -165,34 +165,43 @@ def test_hr_call_transcript_analysis_updates_candidate_score(client):
     session = created.json()
     assert session["status"] == "not_started"
     assert session["candidate"]["jd_resume_score"] >= 80
+    assert len(session["questions"]) >= 8
+    assert session["realtime_transcription_available"] is False
+    assert any(
+        q.get("reason") for q in session["questions"]
+    ), "Questions should include generation reasons"
 
+    # Mock call provider has no realtime STT — live transcript posts are rejected.
     started = client.post(f"/call-sessions/{session['id']}/start")
     assert started.status_code == 200, started.text
-    assert started.json()["status"] == "connected"
+    blocked = client.post(
+        f"/call-sessions/{session['id']}/transcript",
+        json={"speaker": "candidate", "text": "Should not accept without realtime STT."},
+    )
+    assert blocked.status_code == 400
+    assert "Real-time transcription" in blocked.json()["detail"]
 
-    entries = [
-        ("hr", "Please summarize your relevant experience."),
-        (
-            "candidate",
-            "I have six years of experience and led Python, FastAPI, SQLAlchemy and PostgreSQL projects.",
-        ),
-        ("hr", "What interests you about this role?"),
-        (
-            "candidate",
-            "I am excited about the role and can start after two weeks notice.",
-        ),
-    ]
-    for speaker, text in entries:
-        response = client.post(
-            f"/call-sessions/{session['id']}/transcript",
-            json={"speaker": speaker, "text": text},
-        )
-        assert response.status_code == 201, response.text
+    pasted = client.post(
+        f"/call-sessions/{session['id']}/paste-transcript",
+        json={
+            "transcript_text": (
+                "HR: Please summarize your relevant experience.\n"
+                "Candidate: I have six years of experience and led Python, FastAPI, "
+                "SQLAlchemy and PostgreSQL projects.\n"
+                "HR: What interests you about this role?\n"
+                "Candidate: I am excited about the role and can start after two weeks notice."
+            )
+        },
+    )
+    assert pasted.status_code == 200, pasted.text
+    assert pasted.json()["session"]["transcript_source"] == "pasted"
+    assert len(pasted.json()["entries"]) >= 2
 
     completed = client.post(f"/call-sessions/{session['id']}/complete")
     assert completed.status_code == 200, completed.text
     result = completed.json()
     assert result["session"]["status"] == "completed"
+    assert result["session"]["transcript_source"] == "pasted"
     assert result["analysis"]["overall_score"] > 0
     assert result["analysis"]["question_analysis"]
 
@@ -209,14 +218,17 @@ def complete_screening(client, job_id: str, candidate_id: str):
         json={"job_id": job_id},
     )
     session_id = created.json()["id"]
-    assert client.post(f"/call-sessions/{session_id}/start").status_code == 200
-    assert client.post(
-        f"/call-sessions/{session_id}/transcript",
+    pasted = client.post(
+        f"/call-sessions/{session_id}/paste-transcript",
         json={
-            "speaker": "candidate",
-            "text": "I led Python and PostgreSQL services for six years and enjoy collaborative teams.",
+            "transcript_text": (
+                "HR: Please summarize your relevant experience.\n"
+                "Candidate: I led Python and PostgreSQL services for six years "
+                "and enjoy collaborative teams."
+            )
         },
-    ).status_code == 201
+    )
+    assert pasted.status_code == 200, pasted.text
     completed = client.post(f"/call-sessions/{session_id}/complete")
     assert completed.status_code == 200
     return completed.json()
@@ -696,6 +708,48 @@ def test_candidate_screening_status_and_score_range_filters(client):
         params={"screening_status": "not_screened"},
     )
     assert still_pending.json()["total"] == 0
+
+
+def test_jd_summary_bullets_scoring_criteria_and_semantic_search(client):
+    created = create_job(client)
+    structured = created["requirements"]["structured_data"]
+    bullets = structured["summary_bullets"]
+    assert 5 <= len(bullets) <= 10
+    assert any("python" in bullet.lower() or "fastapi" in bullet.lower() for bullet in bullets)
+
+    criteria = client.get("/scoring-criteria")
+    assert criteria.status_code == 200
+    payload = criteria.json()
+    labels = {item["label"] for item in payload["criteria"]}
+    assert "Required Skills" in labels
+    assert "Experience" in labels
+    assert payload["signals"]
+
+    search = client.get("/jobs/search", params={"q": "backend python fastapi postgresql"})
+    assert search.status_code == 200
+    hits = search.json()["items"]
+    assert hits
+    assert hits[0]["job"]["id"] == created["id"]
+    assert 0 < hits[0]["similarity"] <= 1
+
+
+def test_shortlist_threshold_and_generate_scores(client):
+    job = create_job(client)
+    uploaded = upload_candidate(client, job["id"])
+    listing = client.get(f"/jobs/{job['id']}/candidates")
+    assert listing.status_code == 200
+    assert listing.json()["shortlisted_threshold"] == 60
+    assert listing.json()["total_uploaded"] == 1
+    assert listing.json()["items"][0]["jd_score"] >= 60
+    assert listing.json()["items"][0]["fit_points"]
+
+    generated = client.post(f"/jobs/{job['id']}/generate-scores")
+    assert generated.status_code == 200, generated.text
+    body = generated.json()
+    assert body["analyzed_count"] == 1
+    assert body["shortlisted_count"] == 1
+    assert body["job_id"] == job["id"]
+    assert uploaded["candidate"]["id"]
 
 
 def test_candidate_search_filters_sort_and_comparison(client):

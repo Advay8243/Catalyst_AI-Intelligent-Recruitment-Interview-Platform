@@ -139,13 +139,13 @@ export default function OverviewPage() {
               <EmptyState
                 icon={<Users className="size-6" />}
                 title="No candidates"
-                description="Upload resumes against a job to populate JD → Resume and HR screening averages."
+                description="Upload resumes against a job to populate AI Calculated and HR screening averages."
                 action={<Link href="/screening"><Button>Open screening</Button></Link>}
               />
             ) : (
               <div className="grid gap-4 p-5 sm:grid-cols-2">
                 <ScoreSummary
-                  label="Average JD → Resume Score"
+                  label="Average AI Calculated Score"
                   score={stats?.average_jd_resume_score ?? null}
                 />
                 <ScoreSummary

@@ -19,12 +19,15 @@ from backend.schemas import (
     CandidateRead,
     DashboardActivity,
     DashboardStats,
+    GenerateScoresResult,
     JobCreate,
     JobParsePreview,
     JobRead,
+    JobSearchResponse,
     JobUpdate,
     Page,
     ResumeUploadResult,
+    ScoringCriteriaResponse,
 )
 from backend.services.ai.ai_provider import AIProvider
 from backend.services.core import CandidateService, JobService
@@ -113,7 +116,7 @@ async def parse_job(
             ).extract_text(content)
     else:
         raise ValueError("Content-Type must be application/json or multipart/form-data")
-    extracted = JobService(db, ai).parse_preview(description, title=title)
+    extracted = JobService(db, ai, settings).parse_preview(description, title=title)
     return JobParsePreview(
         description=description,
         extracted=extracted,
@@ -132,7 +135,7 @@ async def create_job(
         payload = await _job_payload(request, settings)
     except ValidationError as exc:
         raise ValueError(str(exc)) from exc
-    service = JobService(db, ai)
+    service = JobService(db, ai, settings)
     job = service.create(payload)
     return _job_read(service, job)
 
@@ -144,9 +147,29 @@ def list_jobs(
     status: str | None = None,
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
+    settings: Settings = Depends(get_settings),
 ):
-    service = JobService(db, ai)
+    service = JobService(db, ai, settings)
     return [_job_read(service, job) for job in service.list(offset, limit, status=status)]
+
+
+@router.get("/jobs/search", response_model=JobSearchResponse)
+def search_jobs(
+    q: str = Query(..., min_length=2),
+    limit: int = Query(20, ge=1, le=50),
+    status: str | None = None,
+    db: Session = Depends(get_db),
+    ai: AIProvider = Depends(get_ai_provider),
+    settings: Settings = Depends(get_settings),
+):
+    return JobService(db, ai, settings).semantic_search(q, limit=limit, status=status)
+
+
+@router.get("/scoring-criteria", response_model=ScoringCriteriaResponse)
+def get_scoring_criteria(settings: Settings = Depends(get_settings)):
+    from backend.services.core import scoring_criteria_from_settings
+
+    return scoring_criteria_from_settings(settings)
 
 
 @router.get("/jobs/{job_id}", response_model=JobRead)
@@ -154,8 +177,9 @@ def get_job(
     job_id: uuid.UUID,
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
+    settings: Settings = Depends(get_settings),
 ):
-    service = JobService(db, ai)
+    service = JobService(db, ai, settings)
     return _job_read(service, service.get(job_id))
 
 
@@ -165,8 +189,9 @@ def update_job(
     payload: JobUpdate,
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
+    settings: Settings = Depends(get_settings),
 ):
-    service = JobService(db, ai)
+    service = JobService(db, ai, settings)
     return _job_read(service, service.update(job_id, payload))
 
 
@@ -175,8 +200,9 @@ def publish_job(
     job_id: uuid.UUID,
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
+    settings: Settings = Depends(get_settings),
 ):
-    service = JobService(db, ai)
+    service = JobService(db, ai, settings)
     return _job_read(service, service.set_status(job_id, "published"))
 
 
@@ -185,8 +211,9 @@ def archive_job(
     job_id: uuid.UUID,
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
+    settings: Settings = Depends(get_settings),
 ):
-    service = JobService(db, ai)
+    service = JobService(db, ai, settings)
     return _job_read(service, service.set_status(job_id, "archived"))
 
 
@@ -195,9 +222,21 @@ def delete_job(
     job_id: uuid.UUID,
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
+    settings: Settings = Depends(get_settings),
 ):
-    JobService(db, ai).delete(job_id)
+    JobService(db, ai, settings).delete(job_id)
     return Response(status_code=204)
+
+
+@router.post("/jobs/{job_id}/generate-scores", response_model=GenerateScoresResult)
+def generate_job_scores(
+    job_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    ai: AIProvider = Depends(get_ai_provider),
+    storage: FileStorage = Depends(get_file_storage),
+    settings: Settings = Depends(get_settings),
+):
+    return CandidateService(db, ai, storage, settings).generate_scores(job_id)
 
 
 @router.post("/jobs/{job_id}/resume", response_model=ResumeUploadResult, status_code=201)

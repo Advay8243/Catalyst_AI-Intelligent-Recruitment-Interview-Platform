@@ -181,7 +181,7 @@ def test_match_keeps_transparent_scores_and_enriches_explanation():
     assert result.preferred_skill_score == transparent.preferred_skill_score
     assert result.matched_skills == transparent.matched_skills
     assert "Transparent overall score" in result.explanation
-    assert "Python" in result.explanation or "FastAPI" in result.explanation
+    assert "python" in result.explanation.casefold() or "fastapi" in result.explanation.casefold()
 
 
 def test_malformed_json_raises_non_retryable():

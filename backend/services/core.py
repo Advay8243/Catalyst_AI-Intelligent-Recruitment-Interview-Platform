@@ -16,19 +16,30 @@ from backend.schemas import (
     CandidateComparisonItem,
     CandidateComparisonResponse,
     CandidateListItem,
+    GenerateScoresResult,
     JDRequirements,
     JobCreate,
+    JobRead,
+    JobSearchHit,
+    JobSearchResponse,
     JobUpdate,
     MatchResult,
     Page,
     ParsedResume,
     ResumeParseCorrection,
     ScoreBreakdown,
+    ScoringCriteriaResponse,
+    ScoringCriterion,
 )
 from backend.services.ai.ai_provider import AIProvider
+from backend.services.ai.embeddings import EmbeddingService, cosine_similarity
+from backend.services.ai.jd_parser import JDParser
 from backend.services.audit import record_audit
 from backend.services.documents import parser_for, sanitize_filename
 from backend.services.storage import FileStorage
+
+
+SHORTLIST_MIN_SCORE = 60
 
 
 class NotFoundError(Exception):
@@ -82,21 +93,123 @@ def _merge_requirements(
     return JDRequirements.model_validate(data)
 
 
+def _ensure_summary_bullets(
+    requirements: JDRequirements, description: str
+) -> JDRequirements:
+    bullets = [item.strip() for item in requirements.summary_bullets if item and item.strip()]
+    if len(bullets) >= 5:
+        return requirements.model_copy(update={"summary_bullets": bullets[:10]})
+    return requirements.model_copy(
+        update={"summary_bullets": JDParser().summarize(description, requirements)}
+    )
+
+
+def scoring_criteria_from_settings(settings: Settings) -> ScoringCriteriaResponse:
+    weights = settings.scoring_weights
+    criteria = [
+        ScoringCriterion(
+            key="required_skills",
+            label="Required Skills",
+            weight_percent=weights["skills"],
+            description=(
+                "Compares required technical/domain skills in the JD against "
+                "demonstrated skills in the resume (primary driver of the skills weight)."
+            ),
+        ),
+        ScoringCriterion(
+            key="preferred_skills",
+            label="Preferred Skills",
+            weight_percent=weights["skills"],
+            description=(
+                "Compares preferred/nice-to-have skills against the candidate's "
+                "demonstrated skills within the same transparent skills category."
+            ),
+        ),
+        ScoringCriterion(
+            key="experience",
+            label="Experience",
+            weight_percent=weights["experience"],
+            description=(
+                "Compares required years/type of experience against the candidate's "
+                "employment history and relevant experience."
+            ),
+        ),
+        ScoringCriterion(
+            key="responsibilities",
+            label="Responsibilities",
+            weight_percent=weights["other"],
+            description=(
+                "Compares JD responsibilities against demonstrated responsibilities "
+                "and projects in the resume."
+            ),
+        ),
+        ScoringCriterion(
+            key="education_certification",
+            label="Education & Certifications",
+            weight_percent=weights["education"],
+            description=(
+                "Compares explicitly required or preferred education/certifications "
+                "against the resume."
+            ),
+        ),
+        ScoringCriterion(
+            key="domain",
+            label="Domain / Role Relevance",
+            weight_percent=weights["industry"],
+            description=(
+                "Compares domain/industry signals in the JD against industries and "
+                "context evidenced in the resume."
+            ),
+        ),
+    ]
+    return ScoringCriteriaResponse(
+        criteria=criteria,
+        signals=[
+            "Skills overlap",
+            "Relevant experience",
+            "Role/responsibility alignment",
+            "Project relevance",
+            "Technology/tool alignment",
+            "Education/certification alignment",
+            "Missing required skills",
+        ],
+        note=(
+            "AI Calculated Score uses the transparent weighted category framework. "
+            "It is never an unexplained LLM-only number."
+        ),
+    )
+
+
 class JobService:
-    def __init__(self, db: Session, ai: AIProvider) -> None:
+    def __init__(self, db: Session, ai: AIProvider, settings: Settings | None = None) -> None:
         self.db = db
         self.repo = JobRepository(db)
         self.ai = ai
+        self.settings = settings
+        self.embeddings = EmbeddingService(settings) if settings else None
+
+    def _embed_job(self, job: Job, requirements: JDRequirements) -> None:
+        if not self.embeddings:
+            return
+        job.embedding = self.embeddings.embed_job(
+            title=job.title,
+            description=job.description,
+            summary_bullets=requirements.summary_bullets,
+            required_skills=requirements.required_skills,
+            preferred_skills=requirements.preferred_skills,
+        )
 
     def parse_preview(self, description: str, title: str | None = None) -> JDRequirements:
         if len(description.strip()) < 20:
             raise ValueError("Job description must be at least 20 characters")
-        return self.ai.parse_job_description(description, title=title)
+        parsed = self.ai.parse_job_description(description, title=title)
+        return _ensure_summary_bullets(parsed, description)
 
     def create(self, payload: JobCreate) -> Job:
         parsed = self.ai.parse_job_description(payload.description, title=payload.title)
-        requirements = _merge_requirements(
-            parsed, payload, title=payload.title or parsed.title
+        requirements = _ensure_summary_bullets(
+            _merge_requirements(parsed, payload, title=payload.title or parsed.title),
+            payload.description,
         )
         job = Job(
             title=requirements.title,
@@ -107,6 +220,7 @@ class JobService:
             description=payload.description,
             status=payload.status,
         )
+        self._embed_job(job, requirements)
         requirement = JobRequirement(structured_data=requirements.model_dump(mode="json"))
         return self.repo.create(job, requirement)
 
@@ -117,8 +231,9 @@ class JobService:
             parsed = self.ai.parse_job_description(payload.description, title=payload.title)
         else:
             parsed = JDRequirements.model_validate(job.requirements.structured_data)
-        requirements = _merge_requirements(
-            parsed, payload, title=payload.title or job.title
+        requirements = _ensure_summary_bullets(
+            _merge_requirements(parsed, payload, title=payload.title or job.title),
+            job.description,
         )
         if payload.title is not None:
             job.title = payload.title
@@ -135,6 +250,7 @@ class JobService:
         if not job.employment_type:
             job.employment_type = requirements.employment_type
         job.requirements.structured_data = requirements.model_dump(mode="json")
+        self._embed_job(job, requirements)
         self.db.commit()
         return self.get(job_id)
 
@@ -168,6 +284,73 @@ class JobService:
 
     def list(self, offset: int, limit: int, status: str | None = None) -> list[Job]:
         return self.repo.list(offset, limit, status=status)
+
+    def semantic_search(
+        self, query: str, *, limit: int = 20, status: str | None = None
+    ) -> JobSearchResponse:
+        cleaned = query.strip()
+        if len(cleaned) < 2:
+            raise ValueError("Search query must be at least 2 characters")
+        if not self.embeddings or not self.settings:
+            raise ValueError("Semantic search is unavailable without settings")
+        query_vector = self.embeddings.embed_text(cleaned)
+        jobs = self.repo.list(offset=0, limit=200, status=status)
+        ranked: list[tuple[float, Job]] = []
+        for job in jobs:
+            if job.status == "archived":
+                continue
+            vector = job.embedding
+            if not vector:
+                data = (job.requirements.structured_data if job.requirements else {}) or {}
+                requirements = JDRequirements.model_validate(
+                    {
+                        "title": job.title,
+                        **{k: v for k, v in data.items() if k != "title"},
+                    }
+                )
+                vector = self.embeddings.embed_job(
+                    title=job.title,
+                    description=job.description,
+                    summary_bullets=list(data.get("summary_bullets") or requirements.summary_bullets),
+                    required_skills=list(data.get("required_skills") or []),
+                    preferred_skills=list(data.get("preferred_skills") or []),
+                )
+                job.embedding = vector
+            similarity = cosine_similarity(query_vector, vector)
+            # Also boost light lexical overlap so exact titles still rank highly.
+            haystack = f"{job.title} {job.description}".lower()
+            tokens = [token for token in cleaned.lower().split() if len(token) > 2]
+            if tokens:
+                hits = sum(1 for token in tokens if token in haystack)
+                similarity = min(1.0, similarity * 0.85 + (hits / len(tokens)) * 0.15)
+            ranked.append((similarity, job))
+        self.db.commit()
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        items: list[JobSearchHit] = []
+        for similarity, job in ranked[:limit]:
+            if similarity <= 0:
+                continue
+            items.append(
+                JobSearchHit(
+                    job=JobRead(
+                        id=job.id,
+                        title=job.title,
+                        company=job.company,
+                        department=job.department,
+                        location=job.location,
+                        employment_type=job.employment_type,
+                        description=job.description,
+                        status=job.status,
+                        created_at=job.created_at,
+                        updated_at=job.updated_at,
+                        requirements=job.requirements,
+                        application_count=self.application_count(job.id),
+                    ),
+                    similarity=round(similarity, 4),
+                )
+            )
+        # Import locally avoided circular - use schema JobRead
+        return JobSearchResponse(query=cleaned, items=items)
 
     def application_count(self, job_id: uuid.UUID) -> int:
         return (
@@ -397,6 +580,8 @@ class CandidateService:
             "preferred_skill_score": result.preferred_skill_score,
             "responsibilities_score": result.responsibilities_score,
             "education_certification_score": result.education_certification_score,
+            "fit_points": result.fit_points,
+            "gap_points": result.gap_points,
         }
         analysis.evidence = {
             name: category.evidence for name, category in result.categories.items()
@@ -442,6 +627,8 @@ class CandidateService:
             "preferred_skill_score": result.preferred_skill_score,
             "responsibilities_score": result.responsibilities_score,
             "education_certification_score": result.education_certification_score,
+            "fit_points": result.fit_points,
+            "gap_points": result.gap_points,
         }
         evidence = {
             name: category.evidence for name, category in result.categories.items()
@@ -488,6 +675,11 @@ class CandidateService:
     def list_candidates(self, job_id: uuid.UUID | None = None, **filters) -> Page:
         if job_id is not None and not self.jobs.get(job_id):
             raise NotFoundError("Job not found")
+        # Shortlisted screening results never include AI Calculated Score below 60.
+        requested_min = filters.get("min_score")
+        effective_min = SHORTLIST_MIN_SCORE
+        if requested_min is not None:
+            effective_min = max(SHORTLIST_MIN_SCORE, int(requested_min))
         rows, total = self.candidates.list_for_job(
             job_id=job_id,
             page=filters["page"],
@@ -495,7 +687,7 @@ class CandidateService:
             search=filters.get("search"),
             status=filters.get("status"),
             decision_status=filters.get("decision_status"),
-            min_score=filters.get("min_score"),
+            min_score=effective_min,
             max_score=filters.get("max_score"),
             min_hr_score=filters.get("min_hr_score"),
             max_hr_score=filters.get("max_hr_score"),
@@ -503,9 +695,19 @@ class CandidateService:
             email_status=filters.get("email_status"),
             uploaded_from=filters.get("uploaded_from"),
             uploaded_to=filters.get("uploaded_to"),
-            sort=filters["sort"],
-            order=filters["order"],
+            sort=filters.get("sort") or "score",
+            order=filters.get("order") or "desc",
         )
+        total_uploaded = None
+        if job_id is not None:
+            total_uploaded = (
+                self.db.scalar(
+                    select(func.count())
+                    .select_from(Application)
+                    .where(Application.job_id == job_id)
+                )
+                or 0
+            )
         items = []
         for (
             candidate,
@@ -546,6 +748,10 @@ class CandidateService:
             else:
                 screening_status = "Not Screened"
                 current_stage = "Resume Review"
+            details = (scoring or {}).get("match_details") if isinstance(scoring, dict) else {}
+            details = details or {}
+            fit_points = [str(item) for item in details.get("fit_points") or []]
+            gap_points = [str(item) for item in details.get("gap_points") or []]
             items.append(
                 CandidateListItem(
                     id=candidate.id,
@@ -558,6 +764,8 @@ class CandidateService:
                     jd_score=jd_score,
                     hr_score=hr_score,
                     fit_reason=explanation,
+                    fit_points=fit_points,
+                    gap_points=gap_points,
                     job_id=candidate_job_id,
                     job_title=job_title,
                     call_status=call_status,
@@ -579,6 +787,85 @@ class CandidateService:
             page=filters["page"],
             page_size=filters["page_size"],
             total=total,
+            total_uploaded=total_uploaded,
+            shortlisted_threshold=SHORTLIST_MIN_SCORE,
+        )
+
+    def generate_scores(self, job_id: uuid.UUID) -> GenerateScoresResult:
+        job = self.jobs.get(job_id)
+        if not job:
+            raise NotFoundError("Job not found")
+        requirements = JDRequirements.model_validate(job.requirements.structured_data)
+        applications = list(
+            self.db.scalars(
+                select(Application)
+                .where(Application.job_id == job_id)
+                .options()
+            )
+        )
+        analyzed = 0
+        shortlisted = 0
+        below = 0
+        for application in applications:
+            resume = self.db.get(Resume, application.resume_id)
+            if not resume:
+                continue
+            parsed = ParsedResume.model_validate(resume.parsed_data)
+            result = self.ai.match_resume(
+                parsed, requirements, self.settings.scoring_weights
+            )
+            analysis = self.db.scalar(
+                select(ResumeAnalysis).where(
+                    ResumeAnalysis.resume_id == resume.id,
+                    ResumeAnalysis.job_id == job_id,
+                )
+            )
+            scoring = {
+                name: category.model_dump(mode="json")
+                for name, category in result.categories.items()
+            }
+            scoring["match_details"] = {
+                "matched_skills": result.matched_skills,
+                "missing_skills": result.missing_skills,
+                "required_skill_score": result.required_skill_score,
+                "preferred_skill_score": result.preferred_skill_score,
+                "responsibilities_score": result.responsibilities_score,
+                "education_certification_score": result.education_certification_score,
+                "fit_points": result.fit_points,
+                "gap_points": result.gap_points,
+            }
+            evidence = {
+                name: category.evidence for name, category in result.categories.items()
+            }
+            evidence["matched_skills"] = result.matched_skills
+            evidence["missing_skills"] = result.missing_skills
+            if analysis:
+                analysis.overall_score = result.overall_score
+                analysis.scoring = scoring
+                analysis.evidence = evidence
+                analysis.explanation = result.explanation
+            else:
+                self.db.add(
+                    ResumeAnalysis(
+                        resume_id=resume.id,
+                        job_id=job_id,
+                        overall_score=result.overall_score,
+                        scoring=scoring,
+                        evidence=evidence,
+                        explanation=result.explanation,
+                    )
+                )
+            analyzed += 1
+            if result.overall_score >= SHORTLIST_MIN_SCORE:
+                shortlisted += 1
+            else:
+                below += 1
+        self.db.commit()
+        return GenerateScoresResult(
+            job_id=job_id,
+            analyzed_count=analyzed,
+            shortlisted_count=shortlisted,
+            skipped_below_threshold=below,
         )
 
     def compare(

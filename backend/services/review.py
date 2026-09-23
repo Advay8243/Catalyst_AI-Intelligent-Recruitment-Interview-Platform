@@ -107,12 +107,17 @@ class CandidateReviewService:
                 "id": job.id,
                 "title": job.title,
                 "description": job.description,
+                "summary_bullets": requirements.get("summary_bullets")
+                or [],
                 "responsibilities": requirements.get("responsibilities", []),
                 "required_skills": requirements.get("required_skills", []),
                 "preferred_skills": requirements.get("preferred_skills", []),
                 "experience_requirements": requirements.get(
-                    "experience_requirements",
-                    f"{requirements.get('minimum_years_experience', 0)}+ years",
+                    "experience_required",
+                    requirements.get(
+                        "experience_requirements",
+                        f"{requirements.get('minimum_years_experience', 0)}+ years",
+                    ),
                 ),
             },
             resume={
@@ -129,6 +134,18 @@ class CandidateReviewService:
                 "scoring": resume_analysis.scoring,
                 "evidence": resume_analysis.evidence,
                 "explanation": resume_analysis.explanation,
+                "fit_points": list(
+                    ((resume_analysis.scoring or {}).get("match_details") or {}).get(
+                        "fit_points"
+                    )
+                    or []
+                ),
+                "gap_points": list(
+                    ((resume_analysis.scoring or {}).get("match_details") or {}).get(
+                        "gap_points"
+                    )
+                    or []
+                ),
             },
             call_session=(
                 {

@@ -33,6 +33,7 @@ class Job(Base, TimestampMixin):
     employment_type: Mapped[Optional[str]] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(json_type)
 
     requirements: Mapped["JobRequirement"] = relationship(
         back_populates="job", cascade="all, delete-orphan", uselist=False

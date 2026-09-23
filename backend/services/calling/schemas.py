@@ -8,7 +8,11 @@ from pydantic import BaseModel, Field
 class ScreeningQuestion(BaseModel):
     id: str
     text: str
-    category: Literal["experience", "skills", "motivation", "communication", "availability"]
+    category: Literal[
+        "experience", "skills", "motivation", "communication", "availability"
+    ]
+    reason: str | None = None
+    focus_skills: list[str] = Field(default_factory=list)
 
 
 class TranscriptEntryInput(BaseModel):
@@ -44,6 +48,8 @@ class CallSessionRead(BaseModel):
     started_at: datetime | None
     ended_at: datetime | None
     created_at: datetime
+    transcript_source: str = "none"
+    realtime_transcription_available: bool = False
 
 
 class QuestionAnalysis(BaseModel):
@@ -77,3 +83,12 @@ class ScreeningAnalysisResult(BaseModel):
 class CompleteCallResult(BaseModel):
     session: CallSessionRead
     analysis: ScreeningAnalysisResult
+
+
+class PasteTranscriptRequest(BaseModel):
+    transcript_text: str = Field(min_length=20, max_length=100_000)
+
+
+class PasteTranscriptResult(BaseModel):
+    session: CallSessionRead
+    entries: list[TranscriptEntryRead]

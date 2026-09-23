@@ -5,9 +5,11 @@ from pydantic import BaseModel, EmailStr, Field
 from backend.config import Settings
 from backend.schemas import JDRequirements, MatchResult, ParsedResume
 from backend.services.ai.ai_provider import AIProvider
+from backend.services.ai.embeddings import EmbeddingService
 from backend.services.ai.errors import AIProviderError
 from backend.services.ai.openai_client import OpenAICompatibleClient
 from backend.services.ai.resume_matcher import ResumeMatcher
+from backend.services.calling.question_generator import ScreeningQuestionGenerator
 from backend.services.calling.schemas import (
     QuestionAnalysis,
     ScreeningAnalysisResult,
@@ -51,10 +53,13 @@ class LLMJDExtraction(BaseModel):
     certifications: list[str] = Field(default_factory=list)
     industries: list[str] = Field(default_factory=list)
     other_requirements: list[str] = Field(default_factory=list)
+    summary_bullets: list[str] = Field(default_factory=list)
 
 
 class LLMFitExplanation(BaseModel):
-    why_candidate_fits: str = Field(min_length=20, max_length=2000)
+    fit_points: list[str] = Field(default_factory=list, max_length=10)
+    gap_points: list[str] = Field(default_factory=list, max_length=10)
+    why_candidate_fits: str | None = Field(default=None, max_length=2000)
     evidence_points: list[str] = Field(default_factory=list, max_length=12)
 
 
@@ -86,6 +91,17 @@ class LLMScreeningAnalysis(BaseModel):
     summary: str = Field(min_length=10, max_length=2000)
 
 
+class LLMGeneratedQuestion(BaseModel):
+    text: str = Field(min_length=8, max_length=500)
+    category: str
+    reason: str = Field(default="", max_length=500)
+    focus_skills: list[str] = Field(default_factory=list)
+
+
+class LLMGeneratedQuestions(BaseModel):
+    questions: list[LLMGeneratedQuestion] = Field(min_length=1)
+
+
 class RealAIProvider(AIProvider):
     """OpenAI-compatible provider with validated structured outputs.
 
@@ -106,6 +122,85 @@ class RealAIProvider(AIProvider):
         self.settings = settings
         self.client = client or OpenAICompatibleClient(settings)
         self.matcher = ResumeMatcher()
+        self.embeddings = EmbeddingService(settings)
+        self.question_fallback = ScreeningQuestionGenerator()
+
+    def generate_embedding(self, text: str) -> list[float]:
+        return self.embeddings.embed_text(text)
+
+    def generate_screening_questions(
+        self,
+        requirements: JDRequirements,
+        resume: ParsedResume,
+        *,
+        matched_skills: list[str],
+        missing_skills: list[str],
+        min_questions: int,
+        max_questions: int,
+    ) -> list[ScreeningQuestion]:
+        """LLM-adaptive questions with deterministic fallback."""
+        system = (
+            "You generate HR screening questions as JSON only. "
+            "Focus on JD requirements and candidate skill gaps. "
+            "Do not ask repetitive questions. "
+            f"{PROTECTED_CHARACTERISTICS_RULE}"
+        )
+        user = (
+            f"Generate between {min_questions} and {max_questions} screening questions. "
+            "Return JSON: {\"questions\": [{\"text\": str, \"category\": "
+            "experience|skills|motivation|communication|availability, "
+            "\"reason\": str, \"focus_skills\": [str]}]}. "
+            "Prioritize missing/weak skills over already-strong matched skills.\n\n"
+            f"JD title: {requirements.title}\n"
+            f"Required skills: {requirements.required_skills}\n"
+            f"Preferred skills: {requirements.preferred_skills}\n"
+            f"Responsibilities: {requirements.responsibilities[:8]}\n"
+            f"Experience required: {requirements.experience_required}\n"
+            f"Matched skills: {matched_skills}\n"
+            f"Missing/weak skills: {missing_skills}\n"
+            f"Candidate skills: {resume.skills}\n"
+            f"Candidate highlights: {resume.highlights[:8]}\n"
+        )
+        try:
+            raw = self.client.complete_json(
+                operation="generate_screening_questions",
+                system_prompt=system,
+                user_prompt=user,
+                schema=LLMGeneratedQuestions,
+            )
+            allowed = {
+                "experience",
+                "skills",
+                "motivation",
+                "communication",
+                "availability",
+            }
+            questions: list[ScreeningQuestion] = []
+            for index, item in enumerate(raw.questions[:max_questions]):
+                category = item.category.strip().lower()
+                if category not in allowed:
+                    category = "skills"
+                questions.append(
+                    ScreeningQuestion(
+                        id=f"q-llm-{index + 1}",
+                        text=item.text.strip(),
+                        category=category,  # type: ignore[arg-type]
+                        reason=item.reason or "JD/candidate adaptive screening question.",
+                        focus_skills=item.focus_skills,
+                    )
+                )
+            if len(questions) >= min_questions:
+                return questions
+        except AIProviderError:
+            pass
+        return self.question_fallback.generate(
+            requirements,
+            resume,
+            matched_skills=matched_skills,
+            missing_skills=missing_skills,
+            min_questions=min_questions,
+            max_questions=max_questions,
+        )
 
     def parse_job_description(
         self, text: str, title: str | None = None
@@ -120,7 +215,10 @@ class RealAIProvider(AIProvider):
             "Return JSON with keys: title, department, location, employment_type, "
             "experience_required, minimum_years_experience, required_skills, "
             "preferred_skills, responsibilities, education, certifications, "
-            "industries, other_requirements.\n"
+            "industries, other_requirements, summary_bullets. "
+            "summary_bullets must be 5-10 concise bullets capturing only facts "
+            "present in the JD (role, skills, experience, responsibilities, "
+            "education/certs, domain/tools). Do not invent requirements.\n"
             f"Suggested title override: {title or 'none'}\n\n"
             f"JD:\n{truncated}"
         )
@@ -130,7 +228,9 @@ class RealAIProvider(AIProvider):
             user_prompt=user,
             schema=LLMJDExtraction,
         )
-        return JDRequirements(
+        from backend.services.ai.jd_parser import JDParser
+
+        requirements = JDRequirements(
             title=title or extracted.title,
             department=extracted.department,
             location=extracted.location,
@@ -144,7 +244,19 @@ class RealAIProvider(AIProvider):
             certifications=extracted.certifications,
             industries=extracted.industries,
             other_requirements=extracted.other_requirements,
+            summary_bullets=[
+                bullet.strip()
+                for bullet in extracted.summary_bullets
+                if bullet and bullet.strip()
+            ][:10],
         )
+        if len(requirements.summary_bullets) < 5:
+            requirements = requirements.model_copy(
+                update={
+                    "summary_bullets": JDParser().summarize(text, requirements)
+                }
+            )
+        return requirements
 
     def parse_resume(self, text: str) -> ParsedResume:
         truncated = text[:12000]
@@ -191,9 +303,10 @@ class RealAIProvider(AIProvider):
             f"{PROTECTED_CHARACTERISTICS_RULE}"
         )
         user = (
-            "Given this resume and JD evidence, return JSON with "
-            "why_candidate_fits and evidence_points. "
-            "Reference only provided facts. Do not change or invent scores.\n\n"
+            "Given this resume and JD evidence, return JSON with fit_points and "
+            "gap_points as concise evidence-based bullet strings. "
+            "Only include gaps supported by missing JD requirements. "
+            "Do not invent skills or experience. Do not change scores.\n\n"
             f"Job title: {requirements.title}\n"
             f"Required skills: {requirements.required_skills}\n"
             f"Preferred skills: {requirements.preferred_skills}\n"
@@ -202,6 +315,8 @@ class RealAIProvider(AIProvider):
             f"Certifications: {requirements.certifications}\n"
             f"Matched skills: {scored.matched_skills}\n"
             f"Missing skills: {scored.missing_skills}\n"
+            f"Transparent fit points: {scored.fit_points}\n"
+            f"Transparent gap points: {scored.gap_points}\n"
             f"Required skill score: {scored.required_skill_score}\n"
             f"Preferred skill score: {scored.preferred_skill_score}\n"
             f"Experience score: {scored.categories['experience'].score}\n"
@@ -221,16 +336,38 @@ class RealAIProvider(AIProvider):
                 user_prompt=user,
                 schema=LLMFitExplanation,
             )
-            evidence_suffix = ""
-            if narrative.evidence_points:
-                evidence_suffix = " Evidence: " + "; ".join(narrative.evidence_points[:5])
+            fit_points = [
+                point.strip()
+                for point in (narrative.fit_points or scored.fit_points)
+                if point and point.strip()
+            ][:8] or scored.fit_points
+            gap_points = [
+                point.strip()
+                for point in (narrative.gap_points or [])
+                if point and point.strip()
+            ][:8]
+            if not gap_points:
+                gap_points = scored.gap_points
+            explanation_parts = []
+            if fit_points:
+                explanation_parts.append("Fits: " + "; ".join(fit_points))
+            if gap_points:
+                explanation_parts.append("Does not fit / gaps: " + "; ".join(gap_points))
             explanation = (
-                f"{narrative.why_candidate_fits.strip()} "
-                f"(Transparent overall score {scored.overall_score}/100 "
-                f"from configured category weights; protected traits excluded.)"
-                f"{evidence_suffix}"
+                " | ".join(explanation_parts)
+                if explanation_parts
+                else scored.explanation
+            ) + (
+                f" (Transparent overall score {scored.overall_score}/100 "
+                "from configured category weights; protected traits excluded.)"
             )
-            return scored.model_copy(update={"explanation": explanation})
+            return scored.model_copy(
+                update={
+                    "explanation": explanation,
+                    "fit_points": fit_points,
+                    "gap_points": gap_points,
+                }
+            )
         except AIProviderError:
             # Preserve transparent scores; surface explanation failure as error.
             raise

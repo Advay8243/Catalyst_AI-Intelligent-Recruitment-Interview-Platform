@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://api.openai.com/v1"
     ai_timeout_seconds: float = 30.0
     ai_max_retries: int = 2
+    screening_min_questions: int = 8
+    screening_max_questions: int = 15
     scoring_weight_skills: int = 40
     scoring_weight_experience: int = 20
     scoring_weight_education: int = 20

@@ -23,6 +23,8 @@ export type Candidate = {
   jdScore: number | null;
   hrScore: number | null;
   fitReason: string;
+  fitPoints?: string[];
+  gapPoints?: string[];
   status?: string;
   callStatus?: string;
   jobId?: string;
@@ -56,6 +58,7 @@ export type JobRequirements = {
   education?: string[];
   certifications?: string[];
   minimum_years_experience?: number;
+  summary_bullets?: string[];
 };
 
 export type Job = {
@@ -151,12 +154,16 @@ export type PaginatedCandidates = {
   total: number;
   page: number;
   pageSize: number;
+  totalUploaded?: number;
+  shortlistedThreshold?: number;
 };
 
 export type ScreeningQuestion = {
   id: string;
   text: string;
   category: "experience" | "skills" | "motivation" | "communication" | "availability";
+  reason?: string | null;
+  focus_skills?: string[];
 };
 
 export type TranscriptEntry = {
@@ -187,6 +194,8 @@ export type CallSession = {
   started_at?: string;
   ended_at?: string;
   created_at: string;
+  transcript_source?: "none" | "realtime" | "pasted" | string;
+  realtime_transcription_available?: boolean;
 };
 
 export type ScreeningAnalysis = {
@@ -203,6 +212,11 @@ export type ScreeningAnalysis = {
     score: number;
     evidence: string[];
     assessment: string;
+    relevance?: string | null;
+    completeness?: string | null;
+    technical_evidence?: string[];
+    missing_information?: string[];
+    suggested_follow_up?: string | null;
   }>;
   strengths: string[];
   concerns: string[];
@@ -262,6 +276,7 @@ export type CandidateReview = {
     id: string;
     title: string;
     description: string;
+    summary_bullets?: string[];
     responsibilities: string[];
     required_skills: string[];
     preferred_skills: string[];
@@ -303,6 +318,8 @@ export type CandidateReview = {
     >;
     evidence: Record<string, string[]>;
     explanation: string;
+    fit_points?: string[];
+    gap_points?: string[];
   };
   call_session?: {
     id: string;
@@ -390,4 +407,29 @@ export type DashboardActivity = {
     job_title?: string | null;
   }>;
   job_id?: string | null;
+};
+
+export type ScoringCriterion = {
+  key: string;
+  label: string;
+  weight_percent: number;
+  description: string;
+};
+
+export type ScoringCriteria = {
+  criteria: ScoringCriterion[];
+  signals: string[];
+  note: string;
+};
+
+export type JobSearchHit = {
+  job: Job;
+  similarity: number;
+};
+
+export type GenerateScoresResult = {
+  job_id: string;
+  analyzed_count: number;
+  shortlisted_count: number;
+  skipped_below_threshold: number;
 };
