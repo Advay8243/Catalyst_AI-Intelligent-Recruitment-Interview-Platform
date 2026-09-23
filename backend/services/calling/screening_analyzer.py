@@ -100,6 +100,31 @@ class MockScreeningAnalyzer:
                         if answer
                         else "No candidate response was captured for this question."
                     ),
+                    relevance=(
+                        "Answer addresses the screening question with reviewable detail."
+                        if answer
+                        else "No answer captured."
+                    ),
+                    completeness=(
+                        "Sufficient detail for an initial screen."
+                        if answer and len(answer.split()) >= 12
+                        else ("Partial answer." if answer else "Missing answer.")
+                    ),
+                    technical_evidence=(
+                        [skill for skill in mentioned_skills if skill.casefold() in (answer or "").casefold()]
+                        if answer
+                        else []
+                    ),
+                    missing_information=(
+                        []
+                        if answer
+                        else ["Candidate response was not captured for this question."]
+                    ),
+                    suggested_follow_up=(
+                        None
+                        if answer and score >= 70
+                        else f"Ask for a concrete example related to: {question.text}"
+                    ),
                 )
             )
 

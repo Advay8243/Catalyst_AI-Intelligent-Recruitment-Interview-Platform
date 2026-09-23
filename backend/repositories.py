@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime, time, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from backend.calling_models import CallSession, HRScreeningAnalysis
@@ -48,9 +49,10 @@ class JobRepository:
 class CandidateRepository:
     SORT_COLUMNS = {
         "name": Candidate.full_name,
-        "created_at": Candidate.created_at,
+        "created_at": Application.created_at,
         "score": ResumeAnalysis.overall_score,
-        "hr_score": HRScreeningAnalysis.overall_score,
+        "decision": Application.decision,
+        "decision_status": Application.decision,
     }
 
     def __init__(self, db: Session) -> None:
@@ -69,7 +71,7 @@ class CandidateRepository:
 
     def list_for_job(
         self,
-        job_id: uuid.UUID,
+        job_id: uuid.UUID | None,
         page: int,
         page_size: int,
         search: str | None,
@@ -79,6 +81,12 @@ class CandidateRepository:
         order: str,
         max_score: int | None = None,
         screening_status: str | None = None,
+        decision_status: str | None = None,
+        email_status: str | None = None,
+        min_hr_score: int | None = None,
+        max_hr_score: int | None = None,
+        uploaded_from: date | None = None,
+        uploaded_to: date | None = None,
     ) -> tuple[list[tuple], int]:
         hr_score = (
             select(HRScreeningAnalysis.overall_score)
@@ -135,7 +143,7 @@ class CandidateRepository:
             .correlate(Candidate, Application)
             .scalar_subquery()
         )
-        email_status = (
+        email_status_subq = (
             select(EmailHistory.status)
             .where(EmailHistory.application_id == Application.id)
             .order_by(EmailHistory.created_at.desc())
@@ -160,7 +168,7 @@ class CandidateRepository:
                 Application.decision_at,
                 screened_at.label("screened_at"),
                 recommendation.label("recommendation"),
-                email_status.label("email_status"),
+                email_status_subq.label("email_status"),
             )
             .join(Application, Application.candidate_id == Candidate.id)
             .join(Job, Job.id == Application.job_id)
@@ -169,22 +177,65 @@ class CandidateRepository:
                 (ResumeAnalysis.resume_id == Application.resume_id)
                 & (ResumeAnalysis.job_id == Application.job_id),
             )
-            .where(Application.job_id == job_id)
         )
+        if job_id is not None:
+            stmt = stmt.where(Application.job_id == job_id)
+
         if search:
-            term = f"%{search.lower()}%"
+            term = f"%{search.strip().lower()}%"
+            profile_text = func.lower(cast(Candidate.profile, String))
             stmt = stmt.where(
                 or_(
                     func.lower(Candidate.full_name).like(term),
                     func.lower(Candidate.email).like(term),
+                    func.lower(func.coalesce(Candidate.phone, "")).like(term),
+                    profile_text.like(term),
+                    func.lower(Job.title).like(term),
                 )
             )
+
+        # Application workflow status (new / ACCEPTED / …) and explicit decision filter.
         if status:
-            stmt = stmt.where(Application.status == status)
+            normalized_status = status.strip()
+            stmt = stmt.where(
+                or_(
+                    Application.status == normalized_status,
+                    Application.status == normalized_status.upper(),
+                    Application.status == normalized_status.lower(),
+                    Application.decision == normalized_status.lower(),
+                )
+            )
+        if decision_status:
+            key = decision_status.strip().lower().replace(" ", "_")
+            if key in {"pending", "none", "not_decided"}:
+                stmt = stmt.where(Application.decision.is_(None))
+            else:
+                stmt = stmt.where(Application.decision == key)
+
         if min_score is not None:
             stmt = stmt.where(ResumeAnalysis.overall_score >= min_score)
         if max_score is not None:
             stmt = stmt.where(ResumeAnalysis.overall_score <= max_score)
+        if min_hr_score is not None:
+            stmt = stmt.where(hr_score >= min_hr_score)
+        if max_hr_score is not None:
+            stmt = stmt.where(hr_score <= max_hr_score)
+
+        if email_status:
+            key = email_status.strip().lower().replace(" ", "_")
+            if key in {"not_sent", "none"}:
+                stmt = stmt.where(email_status_subq.is_(None))
+            else:
+                # Match Draft / Sent / Failed case-insensitively.
+                stmt = stmt.where(func.lower(email_status_subq) == key.replace("_", " "))
+
+        if uploaded_from is not None:
+            start = datetime.combine(uploaded_from, time.min, tzinfo=timezone.utc)
+            stmt = stmt.where(Application.created_at >= start)
+        if uploaded_to is not None:
+            end = datetime.combine(uploaded_to, time.max, tzinfo=timezone.utc)
+            stmt = stmt.where(Application.created_at <= end)
+
         if screening_status:
             completed_exists = (
                 select(CallSession.id)
@@ -204,7 +255,9 @@ class CandidateRepository:
             )
             key = screening_status.lower().replace(" ", "_")
             if key in {"not_screened", "pending"}:
-                stmt = stmt.where(~in_progress_exists, ~completed_exists, Application.decision.is_(None))
+                stmt = stmt.where(
+                    ~in_progress_exists, ~completed_exists, Application.decision.is_(None)
+                )
             elif key in {"screening_in_progress", "in_progress"}:
                 stmt = stmt.where(in_progress_exists, ~completed_exists)
             elif key in {"awaiting_hr_decision", "hr_screened", "screened"}:
@@ -215,13 +268,74 @@ class CandidateRepository:
                 stmt = stmt.where(Application.decision.in_(("accepted", "advanced")))
             elif key == "rejected":
                 stmt = stmt.where(Application.decision == "rejected")
+
         total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-        column = hr_score if sort == "hr_score" else self.SORT_COLUMNS[sort]
+        if sort in {"hr_score"}:
+            column = hr_score
+        elif sort in self.SORT_COLUMNS:
+            column = self.SORT_COLUMNS[sort]
+        else:
+            column = ResumeAnalysis.overall_score
         ordering = column.desc() if order == "desc" else column.asc()
+        # Stable secondary order for pagination.
         rows = self.db.execute(
-            stmt.order_by(ordering).offset((page - 1) * page_size).limit(page_size)
+            stmt.order_by(ordering, Application.created_at.desc()).offset(
+                (page - 1) * page_size
+            ).limit(page_size)
         ).all()
         return [tuple(row) for row in rows], total
+
+    def comparison_rows(
+        self, job_id: uuid.UUID, candidate_ids: list[uuid.UUID]
+    ) -> list[tuple]:
+        if not candidate_ids:
+            return []
+        stmt = (
+            select(
+                Candidate,
+                Application,
+                Job,
+                ResumeAnalysis,
+                HRScreeningAnalysis,
+                JobRequirement,
+            )
+            .join(Application, Application.candidate_id == Candidate.id)
+            .join(Job, Job.id == Application.job_id)
+            .outerjoin(JobRequirement, JobRequirement.job_id == Job.id)
+            .outerjoin(
+                ResumeAnalysis,
+                (ResumeAnalysis.resume_id == Application.resume_id)
+                & (ResumeAnalysis.job_id == Application.job_id),
+            )
+            .outerjoin(
+                HRScreeningAnalysis,
+                (HRScreeningAnalysis.candidate_id == Candidate.id)
+                & (HRScreeningAnalysis.job_id == Application.job_id),
+            )
+            .where(
+                Application.job_id == job_id,
+                Candidate.id.in_(candidate_ids),
+            )
+        )
+        rows = self.db.execute(stmt).all()
+        best: dict[uuid.UUID, tuple] = {}
+        for row in rows:
+            candidate, application, job, analysis, hr_analysis, requirements = row
+            current = best.get(candidate.id)
+            if current is None:
+                best[candidate.id] = row
+                continue
+            current_hr = current[4]
+            if hr_analysis is None:
+                continue
+            if current_hr is None or hr_analysis.created_at >= current_hr.created_at:
+                best[candidate.id] = row
+        order_index = {cid: index for index, cid in enumerate(candidate_ids)}
+        ordered = sorted(
+            best.values(),
+            key=lambda row: order_index.get(row[0].id, 10_000),
+        )
+        return [tuple(row) for row in ordered]
 
     def analysis(
         self, candidate_id: uuid.UUID, job_id: uuid.UUID | None = None

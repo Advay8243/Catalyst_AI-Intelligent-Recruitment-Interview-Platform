@@ -6,6 +6,7 @@ from backend.api import router
 from backend.calling_api import router as calling_router
 from backend.config import get_settings
 from backend.review_api import router as review_router
+from backend.services.ai.errors import AIProviderError
 from backend.services.core import ConflictError, NotFoundError
 
 
@@ -33,6 +34,19 @@ async def conflict_handler(_: Request, exc: ConflictError) -> JSONResponse:
 @app.exception_handler(ValueError)
 async def value_error_handler(_: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(AIProviderError)
+async def ai_provider_error_handler(_: Request, exc: AIProviderError) -> JSONResponse:
+    status_code = 503 if exc.retryable else 502
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "detail": str(exc),
+            "operation": exc.operation,
+            "retryable": exc.retryable,
+        },
+    )
 
 
 @app.get("/health")

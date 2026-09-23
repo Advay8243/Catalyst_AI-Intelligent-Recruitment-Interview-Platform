@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
@@ -14,6 +15,7 @@ from backend.dependencies import get_ai_provider, get_file_storage
 from backend.schemas import (
     AnalysisRead,
     BatchResumeUploadResult,
+    CandidateComparisonResponse,
     CandidateRead,
     DashboardActivity,
     DashboardStats,
@@ -272,6 +274,49 @@ def dashboard_activity(
     return DashboardService(db).activity(job_id, limit=limit)
 
 
+@router.get("/candidates", response_model=Page)
+def list_all_candidates(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    job_id: uuid.UUID | None = None,
+    search: str | None = None,
+    status: str | None = None,
+    decision_status: str | None = None,
+    screening_status: str | None = None,
+    email_status: str | None = None,
+    min_score: int | None = Query(None, ge=0, le=100),
+    max_score: int | None = Query(None, ge=0, le=100),
+    min_hr_score: int | None = Query(None, ge=0, le=100),
+    max_hr_score: int | None = Query(None, ge=0, le=100),
+    uploaded_from: date | None = None,
+    uploaded_to: date | None = None,
+    sort: Literal["name", "created_at", "score", "hr_score", "decision", "decision_status"] = "score",
+    order: Literal["asc", "desc"] = "desc",
+    db: Session = Depends(get_db),
+    ai: AIProvider = Depends(get_ai_provider),
+    storage: FileStorage = Depends(get_file_storage),
+    settings: Settings = Depends(get_settings),
+):
+    return CandidateService(db, ai, storage, settings).list_candidates(
+        job_id=job_id,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        decision_status=decision_status,
+        screening_status=screening_status,
+        email_status=email_status,
+        min_score=min_score,
+        max_score=max_score,
+        min_hr_score=min_hr_score,
+        max_hr_score=max_hr_score,
+        uploaded_from=uploaded_from,
+        uploaded_to=uploaded_to,
+        sort=sort,
+        order=order,
+    )
+
+
 @router.get("/jobs/{job_id}/candidates", response_model=Page)
 def list_candidates(
     job_id: uuid.UUID,
@@ -279,28 +324,52 @@ def list_candidates(
     page_size: int = Query(20, ge=1, le=100),
     search: str | None = None,
     status: str | None = None,
+    decision_status: str | None = None,
     screening_status: str | None = None,
+    email_status: str | None = None,
     min_score: int | None = Query(None, ge=0, le=100),
     max_score: int | None = Query(None, ge=0, le=100),
-    sort: Literal["name", "created_at", "score", "hr_score"] = "score",
+    min_hr_score: int | None = Query(None, ge=0, le=100),
+    max_hr_score: int | None = Query(None, ge=0, le=100),
+    uploaded_from: date | None = None,
+    uploaded_to: date | None = None,
+    sort: Literal["name", "created_at", "score", "hr_score", "decision", "decision_status"] = "score",
     order: Literal["asc", "desc"] = "desc",
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
     storage: FileStorage = Depends(get_file_storage),
     settings: Settings = Depends(get_settings),
 ):
-    return CandidateService(db, ai, storage, settings).list_for_job(
-        job_id,
+    return CandidateService(db, ai, storage, settings).list_candidates(
+        job_id=job_id,
         page=page,
         page_size=page_size,
         search=search,
         status=status,
+        decision_status=decision_status,
+        screening_status=screening_status,
+        email_status=email_status,
         min_score=min_score,
         max_score=max_score,
-        screening_status=screening_status,
+        min_hr_score=min_hr_score,
+        max_hr_score=max_hr_score,
+        uploaded_from=uploaded_from,
+        uploaded_to=uploaded_to,
         sort=sort,
         order=order,
     )
+
+
+@router.get("/jobs/{job_id}/candidates/compare", response_model=CandidateComparisonResponse)
+def compare_candidates(
+    job_id: uuid.UUID,
+    ids: list[uuid.UUID] = Query(..., min_length=2, max_length=5),
+    db: Session = Depends(get_db),
+    ai: AIProvider = Depends(get_ai_provider),
+    storage: FileStorage = Depends(get_file_storage),
+    settings: Settings = Depends(get_settings),
+):
+    return CandidateService(db, ai, storage, settings).compare(job_id, ids)
 
 
 @router.delete(

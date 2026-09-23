@@ -696,3 +696,172 @@ def test_candidate_screening_status_and_score_range_filters(client):
         params={"screening_status": "not_screened"},
     )
     assert still_pending.json()["total"] == 0
+
+
+def test_candidate_search_filters_sort_and_comparison(client):
+    job = create_job(client)
+    second_job = client.post(
+        "/jobs",
+        json={
+            **JOB,
+            "title": "Platform Engineer",
+            "description": (
+                "Platform Engineer\nBuild platforms with Python and Kubernetes. "
+                "4+ years experience. Bachelor degree required."
+            ),
+        },
+    ).json()
+
+    alex = upload_candidate(client, job["id"])
+    maya = client.post(
+        f"/jobs/{job['id']}/resume",
+        files={
+            "file": (
+                "maya.docx",
+                docx_resume(name="Maya Chen", email="maya@example.com"),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert maya.status_code == 201, maya.text
+    maya_id = maya.json()["candidate"]["id"]
+    alex_id = alex["candidate"]["id"]
+
+    by_name = client.get(f"/jobs/{job['id']}/candidates", params={"search": "maya"})
+    assert by_name.status_code == 200
+    assert by_name.json()["total"] == 1
+    assert by_name.json()["items"][0]["full_name"] == "Maya Chen"
+
+    by_email = client.get("/candidates", params={"job_id": job["id"], "search": "alex@example.com"})
+    assert by_email.json()["total"] == 1
+
+    by_phone = client.get(f"/jobs/{job['id']}/candidates", params={"search": "555 0147"})
+    assert by_phone.json()["total"] >= 1
+
+    by_skill = client.get(f"/jobs/{job['id']}/candidates", params={"search": "fastapi"})
+    assert by_skill.json()["total"] >= 1
+
+    by_title = client.get("/candidates", params={"search": "Platform Engineer"})
+    assert by_title.status_code == 200
+    # No candidates on platform job yet.
+    assert by_title.json()["total"] == 0
+
+    client.post(
+        f"/jobs/{second_job['id']}/resume",
+        files={
+            "file": (
+                "sam.docx",
+                docx_resume(name="Sam Lee", email="sam@example.com"),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    by_title_hit = client.get("/candidates", params={"search": "Platform Engineer"})
+    assert by_title_hit.json()["total"] == 1
+    assert by_title_hit.json()["items"][0]["job_title"] == "Platform Engineer"
+
+    complete_screening(client, job["id"], alex_id)
+    decided = client.post(
+        f"/candidates/{alex_id}/decision",
+        json={"job_id": job["id"], "decision": "advanced"},
+    )
+    assert decided.status_code == 200
+
+    draft = client.post(
+        f"/candidates/{alex_id}/email-draft",
+        json={"job_id": job["id"], "email_type": "advanced"},
+    )
+    assert draft.status_code == 200
+    message = draft.json()
+    sent = client.post(
+        f"/candidates/{alex_id}/emails",
+        json={
+            "job_id": job["id"],
+            "draft_id": message["id"],
+            "recipient": "recruiting-alias@example.org",
+            "subject": message["subject"],
+            "body": message["body"],
+        },
+    )
+    assert sent.status_code == 201
+
+    decision_filter = client.get(
+        f"/jobs/{job['id']}/candidates",
+        params={"decision_status": "advanced"},
+    )
+    assert decision_filter.json()["total"] == 1
+    assert decision_filter.json()["items"][0]["decision_status"] == "advanced"
+
+    email_filter = client.get(
+        f"/jobs/{job['id']}/candidates",
+        params={"email_status": "sent"},
+    )
+    assert email_filter.json()["total"] == 1
+
+    hr_filter = client.get(
+        f"/jobs/{job['id']}/candidates",
+        params={"min_hr_score": 1, "max_hr_score": 100},
+    )
+    assert hr_filter.json()["total"] == 1
+
+    from datetime import date, timedelta
+
+    today = date.today().isoformat()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    date_filter = client.get(
+        f"/jobs/{job['id']}/candidates",
+        params={"uploaded_from": today, "uploaded_to": tomorrow},
+    )
+    assert date_filter.json()["total"] == 2
+
+    sorted_by_name = client.get(
+        f"/jobs/{job['id']}/candidates",
+        params={"sort": "name", "order": "asc"},
+    )
+    names = [item["full_name"] for item in sorted_by_name.json()["items"]]
+    assert names == sorted(names)
+
+    sorted_by_decision = client.get(
+        f"/jobs/{job['id']}/candidates",
+        params={"sort": "decision", "order": "asc"},
+    )
+    assert sorted_by_decision.status_code == 200
+    assert sorted_by_decision.json()["total"] == 2
+
+    page = client.get(
+        f"/jobs/{job['id']}/candidates",
+        params={"page": 1, "page_size": 1, "sort": "name", "order": "asc"},
+    )
+    assert page.json()["page_size"] == 1
+    assert page.json()["total"] == 2
+    assert len(page.json()["items"]) == 1
+
+    compare = client.get(
+        f"/jobs/{job['id']}/candidates/compare",
+        params=[("ids", alex_id), ("ids", maya_id)],
+    )
+    assert compare.status_code == 200, compare.text
+    payload = compare.json()
+    assert payload["job_id"] == job["id"]
+    assert len(payload["items"]) == 2
+    first = payload["items"][0]
+    assert "required_skills_score" in first
+    assert "preferred_skills_score" in first
+    assert "experience_score" in first
+    assert "responsibilities_score" in first
+    assert "education_score" in first
+    assert "strengths" in first
+    assert "missing_information" in first
+    assert "ai_recommendation" in first
+    assert "human_decision" in first
+    assert first["score_breakdown"] is not None or first["jd_score"] is not None
+    # Protected characteristics must not appear as comparison fields.
+    assert "age" not in first
+    assert "gender" not in first
+    assert "race" not in first
+
+    too_few = client.get(
+        f"/jobs/{job['id']}/candidates/compare",
+        params=[("ids", alex_id)],
+    )
+    assert too_few.status_code == 422
