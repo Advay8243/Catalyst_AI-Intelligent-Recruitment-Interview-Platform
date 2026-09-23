@@ -12,6 +12,8 @@ from backend.services.calling.call_service import CallService
 from backend.services.calling.schemas import (
     CallSessionRead,
     CompleteCallResult,
+    PasteTranscriptRequest,
+    PasteTranscriptResult,
     TranscriptEntryInput,
     TranscriptEntryRead,
 )
@@ -71,7 +73,25 @@ def add_transcript(
     provider: CallProvider = Depends(get_call_provider),
     ai: AIProvider = Depends(get_ai_provider),
 ):
+    """Provider-streamed realtime transcript event (not manual HR entry)."""
     return CallService(db, provider, ai).add_transcript(session_id, payload)
+
+
+@router.post(
+    "/call-sessions/{session_id}/paste-transcript",
+    response_model=PasteTranscriptResult,
+)
+def paste_transcript(
+    session_id: uuid.UUID,
+    payload: PasteTranscriptRequest,
+    db: Session = Depends(get_db),
+    provider: CallProvider = Depends(get_call_provider),
+    ai: AIProvider = Depends(get_ai_provider),
+):
+    """Fallback: paste a complete transcript without requiring a live call."""
+    return CallService(db, provider, ai).paste_transcript(
+        session_id, payload.transcript_text
+    )
 
 
 @router.post("/call-sessions/{session_id}/complete", response_model=CompleteCallResult)
@@ -81,4 +101,5 @@ def complete_call(
     provider: CallProvider = Depends(get_call_provider),
     ai: AIProvider = Depends(get_ai_provider),
 ):
+    """Analyze transcript (realtime or pasted) via the shared AI pipeline."""
     return CallService(db, provider, ai).complete(session_id)

@@ -258,6 +258,10 @@ export async function getJobs(): Promise<Job[]> {
   return Array.isArray(raw) ? raw : raw.items ?? raw.jobs ?? [];
 }
 
+export async function getJob(jobId: string): Promise<Job> {
+  return request<Job>(`/jobs/${encodeURIComponent(jobId)}`);
+}
+
 export async function searchJobs(query: string, limit = 20): Promise<JobSearchHit[]> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
   const raw = await request<{ items?: Array<{ job: Job; similarity: number }> }>(
@@ -499,6 +503,10 @@ export async function createCallSession(candidateId: string, jobId?: string): Pr
   });
 }
 
+export async function getCallSession(sessionId: string): Promise<CallSession> {
+  return request<CallSession>(`/call-sessions/${encodeURIComponent(sessionId)}`);
+}
+
 export async function startCall(sessionId: string): Promise<CallSession> {
   return request<CallSession>(`/call-sessions/${encodeURIComponent(sessionId)}/start`, {
     method: "POST",
@@ -515,6 +523,19 @@ export async function addTranscriptEntry(
     {
       method: "POST",
       body: JSON.stringify({ speaker, text }),
+    },
+  );
+}
+
+export async function pasteTranscript(
+  sessionId: string,
+  transcriptText: string,
+): Promise<{ session: CallSession; entries: TranscriptEntry[] }> {
+  return request<{ session: CallSession; entries: TranscriptEntry[] }>(
+    `/call-sessions/${encodeURIComponent(sessionId)}/paste-transcript`,
+    {
+      method: "POST",
+      body: JSON.stringify({ transcript_text: transcriptText }),
     },
   );
 }

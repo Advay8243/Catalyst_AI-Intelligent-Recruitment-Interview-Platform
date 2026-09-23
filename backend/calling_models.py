@@ -30,6 +30,7 @@ class CallSession(Base):
     provider_call_id: Mapped[str | None] = mapped_column(String(255), unique=True)
     status: Mapped[str] = mapped_column(String(32), default="not_started", index=True)
     questions: Mapped[list[dict[str, Any]]] = mapped_column(json_type, default=list)
+    transcript_source: Mapped[str] = mapped_column(String(32), default="none")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(

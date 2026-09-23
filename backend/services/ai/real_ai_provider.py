@@ -5,9 +5,11 @@ from pydantic import BaseModel, EmailStr, Field
 from backend.config import Settings
 from backend.schemas import JDRequirements, MatchResult, ParsedResume
 from backend.services.ai.ai_provider import AIProvider
+from backend.services.ai.embeddings import EmbeddingService
 from backend.services.ai.errors import AIProviderError
 from backend.services.ai.openai_client import OpenAICompatibleClient
 from backend.services.ai.resume_matcher import ResumeMatcher
+from backend.services.calling.question_generator import ScreeningQuestionGenerator
 from backend.services.calling.schemas import (
     QuestionAnalysis,
     ScreeningAnalysisResult,
@@ -89,6 +91,17 @@ class LLMScreeningAnalysis(BaseModel):
     summary: str = Field(min_length=10, max_length=2000)
 
 
+class LLMGeneratedQuestion(BaseModel):
+    text: str = Field(min_length=8, max_length=500)
+    category: str
+    reason: str = Field(default="", max_length=500)
+    focus_skills: list[str] = Field(default_factory=list)
+
+
+class LLMGeneratedQuestions(BaseModel):
+    questions: list[LLMGeneratedQuestion] = Field(min_length=1)
+
+
 class RealAIProvider(AIProvider):
     """OpenAI-compatible provider with validated structured outputs.
 
@@ -109,6 +122,85 @@ class RealAIProvider(AIProvider):
         self.settings = settings
         self.client = client or OpenAICompatibleClient(settings)
         self.matcher = ResumeMatcher()
+        self.embeddings = EmbeddingService(settings)
+        self.question_fallback = ScreeningQuestionGenerator()
+
+    def generate_embedding(self, text: str) -> list[float]:
+        return self.embeddings.embed_text(text)
+
+    def generate_screening_questions(
+        self,
+        requirements: JDRequirements,
+        resume: ParsedResume,
+        *,
+        matched_skills: list[str],
+        missing_skills: list[str],
+        min_questions: int,
+        max_questions: int,
+    ) -> list[ScreeningQuestion]:
+        """LLM-adaptive questions with deterministic fallback."""
+        system = (
+            "You generate HR screening questions as JSON only. "
+            "Focus on JD requirements and candidate skill gaps. "
+            "Do not ask repetitive questions. "
+            f"{PROTECTED_CHARACTERISTICS_RULE}"
+        )
+        user = (
+            f"Generate between {min_questions} and {max_questions} screening questions. "
+            "Return JSON: {\"questions\": [{\"text\": str, \"category\": "
+            "experience|skills|motivation|communication|availability, "
+            "\"reason\": str, \"focus_skills\": [str]}]}. "
+            "Prioritize missing/weak skills over already-strong matched skills.\n\n"
+            f"JD title: {requirements.title}\n"
+            f"Required skills: {requirements.required_skills}\n"
+            f"Preferred skills: {requirements.preferred_skills}\n"
+            f"Responsibilities: {requirements.responsibilities[:8]}\n"
+            f"Experience required: {requirements.experience_required}\n"
+            f"Matched skills: {matched_skills}\n"
+            f"Missing/weak skills: {missing_skills}\n"
+            f"Candidate skills: {resume.skills}\n"
+            f"Candidate highlights: {resume.highlights[:8]}\n"
+        )
+        try:
+            raw = self.client.complete_json(
+                operation="generate_screening_questions",
+                system_prompt=system,
+                user_prompt=user,
+                schema=LLMGeneratedQuestions,
+            )
+            allowed = {
+                "experience",
+                "skills",
+                "motivation",
+                "communication",
+                "availability",
+            }
+            questions: list[ScreeningQuestion] = []
+            for index, item in enumerate(raw.questions[:max_questions]):
+                category = item.category.strip().lower()
+                if category not in allowed:
+                    category = "skills"
+                questions.append(
+                    ScreeningQuestion(
+                        id=f"q-llm-{index + 1}",
+                        text=item.text.strip(),
+                        category=category,  # type: ignore[arg-type]
+                        reason=item.reason or "JD/candidate adaptive screening question.",
+                        focus_skills=item.focus_skills,
+                    )
+                )
+            if len(questions) >= min_questions:
+                return questions
+        except AIProviderError:
+            pass
+        return self.question_fallback.generate(
+            requirements,
+            resume,
+            matched_skills=matched_skills,
+            missing_skills=missing_skills,
+            min_questions=min_questions,
+            max_questions=max_questions,
+        )
 
     def parse_job_description(
         self, text: str, title: str | None = None

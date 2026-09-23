@@ -7,8 +7,9 @@ import { ScreeningClient } from "@/components/screening-client";
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push }),
+  useRouter: () => ({ push, replace: push }),
   usePathname: () => "/screening",
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 const job = {

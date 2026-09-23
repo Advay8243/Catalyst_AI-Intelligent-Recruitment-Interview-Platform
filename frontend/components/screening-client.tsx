@@ -17,7 +17,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { EmptyState, ErrorBanner } from "@/components/empty-state";
 import { ScoreDrawer, ScorePill } from "@/components/candidate-panels";
@@ -27,6 +27,7 @@ import {
   compareCandidates,
   generateJobScores,
   getCandidates,
+  getJob,
   getJobs,
   searchJobs,
 } from "@/lib/api";
@@ -41,6 +42,8 @@ type Notice = { message: string; error?: boolean };
 
 export function ScreeningClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialJobId = searchParams.get("job_id") ?? "";
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
@@ -50,7 +53,7 @@ export function ScreeningClient() {
   const [jdQuery, setJdQuery] = useState("");
   const [jdHits, setJdHits] = useState<JobSearchHit[]>([]);
   const [searchingJobs, setSearchingJobs] = useState(false);
-  const [jobId, setJobId] = useState("");
+  const [jobId, setJobId] = useState(initialJobId);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [decisionStatus, setDecisionStatus] = useState("");
   const [screeningStatus, setScreeningStatus] = useState("");
@@ -74,9 +77,28 @@ export function ScreeningClient() {
 
   useEffect(() => {
     getJobs()
-      .then((items) => setJobs(items.filter((job) => job.status !== "archived")))
+      .then((items) => {
+        const active = items.filter((job) => job.status !== "archived");
+        setJobs(active);
+        if (initialJobId) {
+          const match = active.find((job) => job.id === initialJobId);
+          if (match) {
+            setSelectedJob(match);
+            setJobId(match.id);
+            setJdQuery(match.title);
+          } else {
+            getJob(initialJobId)
+              .then((job) => {
+                setSelectedJob(job);
+                setJobId(job.id);
+                setJdQuery(job.title);
+              })
+              .catch(() => undefined);
+          }
+        }
+      })
       .catch((caught) => setError(friendlyErrorMessage(caught, "Could not load jobs.")));
-  }, []);
+  }, [initialJobId]);
 
   useEffect(() => {
     if (!jdQuery.trim()) {
@@ -166,6 +188,7 @@ export function ScreeningClient() {
     setTotal(0);
     setPage(1);
     setSelectedIds([]);
+    router.replace(`/screening?job_id=${encodeURIComponent(job.id)}`);
   };
 
   const runGenerateScores = async () => {

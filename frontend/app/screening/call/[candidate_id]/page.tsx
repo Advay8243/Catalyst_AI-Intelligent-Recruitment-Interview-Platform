@@ -5,21 +5,24 @@ import {
   BriefcaseBusiness,
   CheckCircle2,
   CircleDot,
+  ClipboardPaste,
   Loader2,
   Mail,
   MessageSquareText,
   Mic,
+  MicOff,
   Phone,
   PhoneOff,
   Sparkles,
 } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Button, Input, Skeleton } from "@/components/ui";
+import { Badge, Button, Skeleton } from "@/components/ui";
 import {
-  addTranscriptEntry,
   completeCall,
   createCallSession,
+  getCallSession,
+  pasteTranscript,
   startCall,
 } from "@/lib/api";
 import type {
@@ -43,8 +46,8 @@ export default function HRScreeningCallPage() {
   const router = useRouter();
   const [session, setSession] = useState<CallSession | null>(null);
   const [analysis, setAnalysis] = useState<ScreeningAnalysis | null>(null);
-  const [speaker, setSpeaker] = useState<"hr" | "candidate">("candidate");
-  const [text, setText] = useState("");
+  const [pasteText, setPasteText] = useState("");
+  const [showPaste, setShowPaste] = useState(false);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState("");
   const [error, setError] = useState("");
@@ -57,6 +60,22 @@ export default function HRScreeningCallPage() {
       )
       .finally(() => setLoading(false));
   }, [candidateId, searchParams]);
+
+  const realtimeAvailable = Boolean(session?.realtime_transcription_available);
+  const active = session?.status === "connected" || session?.status === "connecting";
+
+  // Poll for progressive realtime transcript when the provider streams STT.
+  useEffect(() => {
+    if (!session || !realtimeAvailable || !active || session.status === "completed") {
+      return;
+    }
+    const timer = setInterval(() => {
+      void getCallSession(session.id)
+        .then((next) => setSession(next))
+        .catch(() => undefined);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [session, realtimeAvailable, active]);
 
   const currentQuestion = useMemo(() => {
     if (!session) return null;
@@ -81,23 +100,20 @@ export default function HRScreeningCallPage() {
     }
   }
 
-  async function addEntry(entrySpeaker = speaker, entryText = text) {
-    if (!session || !entryText.trim()) return;
-    setAction("transcript");
+  async function handlePasteAnalyze() {
+    if (!session || !pasteText.trim()) return;
+    setAction("paste");
     setError("");
     try {
-      const entry = await addTranscriptEntry(
-        session.id,
-        entrySpeaker,
-        entryText.trim(),
-      );
-      setSession({
-        ...session,
-        transcript: [...session.transcript, entry],
-      });
-      setText("");
+      const pasted = await pasteTranscript(session.id, pasteText.trim());
+      setSession(pasted.session);
+      setShowPaste(false);
+      setAction("complete");
+      const result = await completeCall(session.id);
+      setSession(result.session);
+      setAnalysis(result.analysis);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to save transcript.");
+      setError(caught instanceof Error ? caught.message : "Unable to analyze pasted transcript.");
     } finally {
       setAction("");
     }
@@ -136,14 +152,14 @@ export default function HRScreeningCallPage() {
 
   if (!session) return null;
   const candidate = session.candidate;
-  const active = session.status === "connected" || session.status === "connecting";
+  const backHref = `/screening?job_id=${encodeURIComponent(candidate.job_id)}`;
 
   return (
     <div className="min-h-screen bg-[#f7f8fa]">
       <header className="border-b bg-white px-5 py-5 sm:px-8">
         <div className="mx-auto max-w-[1440px]">
           <button
-            onClick={() => router.push("/screening")}
+            onClick={() => router.push(backHref)}
             className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#667085] hover:text-primary"
           >
             <ArrowLeft className="size-4" /> Back to Candidates
@@ -200,22 +216,35 @@ export default function HRScreeningCallPage() {
           <section className="rounded-xl border bg-white p-5 shadow-panel">
             <h2 className="font-semibold">Call controls</h2>
             <p className="mt-1 text-xs leading-5 text-[#667085]">
-              Mock provider mode simulates connectivity; no external call is placed.
+              {realtimeAvailable
+                ? "Live call with automatic speech-to-text transcription."
+                : "Mock provider mode simulates connectivity; no external call is placed."}
             </p>
             {session.status === "not_started" ? (
               <Button className="mt-4 w-full" onClick={handleStart} disabled={!candidate.phone || action === "start"}>
                 {action === "start" ? <Loader2 className="size-4 animate-spin" /> : <Phone className="size-4" />}
                 Start Call
               </Button>
-            ) : active ? (
-              <Button className="mt-4 w-full" variant="danger" onClick={handleComplete} disabled={action === "complete"}>
+            ) : active && session.transcript_source !== "pasted" ? (
+              <Button className="mt-4 w-full" variant="danger" onClick={handleComplete} disabled={action === "complete" || !session.transcript.some((e) => e.speaker === "candidate")}>
                 {action === "complete" ? <Loader2 className="size-4 animate-spin" /> : <PhoneOff className="size-4" />}
                 End & Analyze
               </Button>
-            ) : (
+            ) : session.status === "completed" ? (
               <div className="mt-4 flex items-center gap-2 rounded-lg bg-green-50 p-3 text-sm font-medium text-green-800">
                 <CheckCircle2 className="size-4" /> Screening completed
               </div>
+            ) : null}
+
+            {session.status !== "completed" && (
+              <Button
+                className="mt-3 w-full"
+                variant="secondary"
+                onClick={() => setShowPaste((value) => !value)}
+              >
+                <ClipboardPaste className="size-4" />
+                Paste Existing Transcript
+              </Button>
             )}
           </section>
         </aside>
@@ -225,75 +254,96 @@ export default function HRScreeningCallPage() {
             <h2 className="flex items-center gap-2 font-semibold">
               <MessageSquareText className="size-4 text-primary" /> Live Transcript
             </h2>
-            <p className="mt-1 text-xs text-[#667085]">Capture only job-relevant answers. Protected characteristics are not analyzed.</p>
+            <p className="mt-1 text-xs text-[#667085]">
+              Speakers are identified automatically from the call/transcription system when available.
+            </p>
           </div>
           <div aria-live="polite" className="flex-1 space-y-4 overflow-y-auto p-5">
-            {!session.transcript.length && (
+            {!realtimeAvailable && session.transcript_source !== "pasted" && !session.transcript.length && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <div className="flex items-start gap-2">
+                  <MicOff className="mt-0.5 size-4 shrink-0" />
+                  <div>
+                    <p className="font-semibold">Real-time transcription unavailable</p>
+                    <p className="mt-1 text-xs leading-5">
+                      The configured call provider does not stream live speech-to-text.
+                      Use <strong>Paste Existing Transcript</strong> to analyze a screening conversation.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {!session.transcript.length && realtimeAvailable && (
               <div className="flex h-full min-h-72 flex-col items-center justify-center text-center">
                 <Mic className="mb-3 size-8 text-[#98a2b3]" />
-                <p className="font-medium">Transcript will appear here</p>
+                <p className="font-medium">Listening for live transcript…</p>
                 <p className="mt-1 max-w-sm text-sm text-[#667085]">
-                  Start the call, ask a suggested question, and capture the candidate response.
+                  HR and candidate speech will appear here as the call progresses.
                 </p>
               </div>
             )}
             {session.transcript.map((entry) => <TranscriptBubble key={entry.id} entry={entry} />)}
           </div>
-          <div className="border-t bg-[#fcfcfd] p-4">
-            <div className="mb-3 flex rounded-lg border bg-white p-1">
-              {(["candidate", "hr"] as const).map((value) => (
-                <button
-                  key={value}
-                  onClick={() => setSpeaker(value)}
-                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold capitalize ${speaker === value ? "bg-primary text-white" : "text-[#667085]"}`}
-                >
-                  {value} speaking
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <Input
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void addEntry();
-                }}
-                disabled={!active}
-                placeholder={active ? "Type the live transcript…" : "Start the call to capture transcript"}
-                aria-label="Transcript text"
+
+          {showPaste && session.status !== "completed" && (
+            <div className="border-t bg-[#fcfcfd] p-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667085]">
+                Paste Existing Transcript
+              </p>
+              <textarea
+                rows={8}
+                value={pasteText}
+                onChange={(event) => setPasteText(event.target.value)}
+                placeholder={"HR: Tell me about your Python experience.\nCandidate: I have five years of Python experience…"}
+                className="w-full rounded-lg border p-3 text-sm"
+                aria-label="Pasted transcript"
               />
-              <Button onClick={() => void addEntry()} disabled={!active || !text.trim() || action === "transcript"}>
-                {action === "transcript" ? <Loader2 className="size-4 animate-spin" /> : "Add"}
+              <Button
+                className="mt-3 w-full"
+                onClick={() => void handlePasteAnalyze()}
+                disabled={pasteText.trim().length < 20 || action === "paste" || action === "complete"}
+              >
+                {(action === "paste" || action === "complete") ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Sparkles className="size-4" />
+                )}
+                Analyze Transcript
               </Button>
             </div>
-          </div>
+          )}
         </section>
 
         <aside className="space-y-5">
           {!analysis ? (
             <section className="rounded-xl border bg-white p-5 shadow-panel">
-              <h2 className="font-semibold">AI-assisted questions</h2>
+              <h2 className="font-semibold">AI-generated questions</h2>
               <p className="mt-1 text-xs leading-5 text-[#667085]">
-                Use these consistent questions to collect scoreable evidence.
+                Adaptive questions derived from this JD and candidate gaps ({session.questions.length}).
               </p>
               <div className="mt-4 space-y-3">
                 {session.questions.map((question, index) => (
-                  <button
+                  <div
                     key={question.id}
-                    disabled={!active}
-                    onClick={() => void addEntry("hr", question.text)}
-                    className={`w-full rounded-lg border p-3 text-left text-sm transition hover:border-primary ${currentQuestion?.id === question.id ? "border-primary bg-[#fff7fb]" : "bg-white"} disabled:cursor-not-allowed disabled:opacity-60`}
+                    className={`rounded-lg border p-3 text-left text-sm ${currentQuestion?.id === question.id ? "border-primary bg-[#fff7fb]" : "bg-white"}`}
                   >
                     <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-[#98a2b3]">
                       Question {index + 1} · {question.category}
                     </span>
                     {question.text}
-                  </button>
+                    {question.focus_skills && question.focus_skills.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {question.focus_skills.map((skill) => (
+                          <Badge key={skill} tone="gray">{skill}</Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             </section>
           ) : (
-            <AnalysisPanel analysis={analysis} />
+            <AnalysisPanel analysis={analysis} backHref={backHref} />
           )}
         </aside>
       </main>
@@ -333,7 +383,7 @@ function TranscriptBubble({ entry }: { entry: TranscriptEntry }) {
   );
 }
 
-function AnalysisPanel({ analysis }: { analysis: ScreeningAnalysis }) {
+function AnalysisPanel({ analysis, backHref }: { analysis: ScreeningAnalysis; backHref: string }) {
   return (
     <section className="rounded-xl border bg-white p-5 shadow-panel">
       <div className="flex items-center justify-between">
@@ -358,7 +408,8 @@ function AnalysisPanel({ analysis }: { analysis: ScreeningAnalysis }) {
         ))}
       </div>
       <p className="mt-5 text-sm leading-6 text-[#475467]">{analysis.summary}</p>
-      <Button className="mt-5 w-full" onClick={() => window.location.assign("/screening")}>
+      <p className="mt-3 text-xs text-[#98a2b3]">AI recommendation is decision support only. Final decision remains with HR.</p>
+      <Button className="mt-5 w-full" onClick={() => window.location.assign(backHref)}>
         <ArrowLeft className="size-4" /> Return to Candidates
       </Button>
     </section>

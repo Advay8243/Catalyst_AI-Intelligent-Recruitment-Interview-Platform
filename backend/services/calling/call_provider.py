@@ -20,6 +20,11 @@ class CallProvider(ABC):
     change the recruitment workflow.
     """
 
+    @property
+    def supports_realtime_transcription(self) -> bool:
+        """True when the provider streams live STT events into the app."""
+        return False
+
     @abstractmethod
     def start_call(self, phone: str) -> ProviderCall:
         raise NotImplementedError

@@ -5,9 +5,12 @@ import {
   BriefcaseBusiness,
   Pencil,
   Plus,
+  Search,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { UploadDialog } from "@/components/upload-dialog";
 import { Badge, Button, Input, Skeleton } from "@/components/ui";
@@ -18,11 +21,13 @@ import {
   getJobs,
   getScoringCriteria,
   publishJob,
+  searchJobs,
   updateJob,
 } from "@/lib/api";
-import type { Job, ScoringCriteria } from "@/lib/types";
+import type { Job, JobSearchHit, ScoringCriteria } from "@/lib/types";
 
 export default function JobsPage() {
+  const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -31,6 +36,9 @@ export default function JobsPage() {
   const [selected, setSelected] = useState<Job | null>(null);
   const [criteria, setCriteria] = useState<ScoringCriteria | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<JobSearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
   const [draft, setDraft] = useState({
     title: "",
     department: "",
@@ -61,6 +69,21 @@ export default function JobsPage() {
     void load();
     getScoringCriteria().then(setCriteria).catch(() => setCriteria(null));
   }, [load]);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchHits([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setSearching(true);
+      searchJobs(searchQuery.trim())
+        .then(setSearchHits)
+        .catch(() => setSearchHits([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const openEdit = (job: Job) => {
     const data = job.requirements?.structured_data ?? {};
@@ -125,6 +148,19 @@ export default function JobsPage() {
     }
   };
 
+  const selectFromSearch = (hit: JobSearchHit) => {
+    setSelected(hit.job);
+    setSearchQuery(hit.job.title);
+    setSearchHits([]);
+  };
+
+  const screenForJob = (job: Job) => {
+    router.push(`/screening?job_id=${encodeURIComponent(job.id)}`);
+  };
+
+  const summaryBullets = selected?.requirements?.structured_data?.summary_bullets ?? [];
+  const skills = selected?.requirements?.structured_data?.required_skills ?? [];
+
   return (
     <div className="min-h-screen">
       <header className="border-b bg-white px-5 py-5 sm:px-8 lg:px-10">
@@ -132,7 +168,7 @@ export default function JobsPage() {
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs font-medium text-[#98a2b3]"><span>Recruitment</span><span>/</span><span className="text-[#667085]">Jobs</span></div>
             <h1 className="text-2xl font-bold tracking-tight text-[#101828]">Jobs & Job Descriptions</h1>
-            <p className="mt-1 text-sm text-[#667085]">Create, edit, publish, archive, or remove job descriptions.</p>
+            <p className="mt-1 text-sm text-[#667085]">Search JDs semantically, review summaries, and open candidate screening.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => void createBlankDraft()}><Plus className="size-4" />New draft</Button>
@@ -144,6 +180,65 @@ export default function JobsPage() {
       <div className="mx-auto max-w-[1200px] space-y-5 p-5 sm:p-8 lg:p-10">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
         {notice && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{notice}</div>}
+
+        <section className="rounded-xl border bg-white p-4 shadow-panel">
+          <h2 className="mb-3 font-semibold">Search Jobs</h2>
+          <label className="relative block">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#98a2b3]" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search semantically…"
+              aria-label="Search jobs semantically"
+              className="pl-9 pr-9"
+            />
+            {searchQuery && (
+              <button
+                aria-label="Clear job search"
+                onClick={() => { setSearchQuery(""); setSearchHits([]); }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#98a2b3]"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </label>
+          {(searching || searchHits.length > 0) && (
+            <div className="mt-3 divide-y rounded-lg border bg-[#fafbfc]">
+              {searching && <p className="px-4 py-3 text-sm text-[#667085]">Searching…</p>}
+              {!searching && searchHits.map((hit) => {
+                const bullets = hit.job.requirements?.structured_data?.summary_bullets ?? [];
+                const hitSkills = hit.job.requirements?.structured_data?.required_skills ?? [];
+                return (
+                  <button
+                    key={hit.job.id}
+                    className="flex w-full flex-col gap-2 px-4 py-3 text-left hover:bg-white"
+                    onClick={() => selectFromSearch(hit)}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-[#101828]">{hit.job.title}</span>
+                      <div className="flex items-center gap-2">
+                        <Badge tone="purple">{Math.round(hit.similarity * 100)}% relevant</Badge>
+                        <Badge tone={hit.job.status === "published" ? "green" : hit.job.status === "archived" ? "gray" : "amber"}>
+                          {hit.job.status ?? "draft"}
+                        </Badge>
+                      </div>
+                    </div>
+                    <p className="text-sm text-[#667085]">
+                      {bullets[0] || hit.job.department || hit.job.location || "JD summary pending"}
+                    </p>
+                    {hitSkills.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {hitSkills.slice(0, 6).map((skill) => (
+                          <Badge key={skill} tone="gray">{skill}</Badge>
+                        ))}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
         <section className="overflow-hidden rounded-xl border bg-white shadow-panel">
           <div className="border-b px-5 py-4">
@@ -173,6 +268,7 @@ export default function JobsPage() {
                     </p>
                   </button>
                   <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => screenForJob(job)}>Screen for this JD</Button>
                     <Button variant="secondary" size="sm" onClick={() => openEdit(job)}><Pencil className="size-4" />Edit</Button>
                     {job.status !== "published" && <Button size="sm" onClick={() => void publishJob(job.id).then(load)}>Publish</Button>}
                     {job.status !== "archived" && (
@@ -201,16 +297,29 @@ export default function JobsPage() {
         {selected && !editing && (
           <section className="grid gap-5 lg:grid-cols-2">
             <div className="rounded-xl border bg-white p-5 shadow-panel">
-              <h2 className="mb-1 font-semibold text-[#101828]">JD Summary</h2>
-              <p className="mb-4 text-sm text-[#667085]">{selected.title}</p>
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="mb-1 font-semibold text-[#101828]">JD Summary</h2>
+                  <p className="text-sm text-[#667085]">{selected.title}</p>
+                </div>
+                <Button size="sm" onClick={() => screenForJob(selected)}>Screen for this JD</Button>
+              </div>
               <ul className="space-y-2 text-sm text-[#475467]">
-                {(selected.requirements?.structured_data?.summary_bullets?.length
-                  ? selected.requirements.structured_data.summary_bullets
+                {(summaryBullets.length
+                  ? summaryBullets
                   : ["Open Edit or re-save this JD to generate a 5–10 bullet summary."]
                 ).map((bullet) => (
                   <li key={bullet} className="flex gap-2"><span className="text-primary">•</span><span>{bullet}</span></li>
                 ))}
               </ul>
+              {skills.length > 0 && (
+                <div className="mt-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#98a2b3]">Relevant skills</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {skills.map((skill) => <Badge key={skill} tone="gray">{skill}</Badge>)}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="rounded-xl border bg-white p-5 shadow-panel">
               <h2 className="mb-1 font-semibold text-[#101828]">AI Screening & Scoring Criteria</h2>

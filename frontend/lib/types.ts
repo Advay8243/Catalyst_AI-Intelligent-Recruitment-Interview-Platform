@@ -162,6 +162,8 @@ export type ScreeningQuestion = {
   id: string;
   text: string;
   category: "experience" | "skills" | "motivation" | "communication" | "availability";
+  reason?: string | null;
+  focus_skills?: string[];
 };
 
 export type TranscriptEntry = {
@@ -192,6 +194,8 @@ export type CallSession = {
   started_at?: string;
   ended_at?: string;
   created_at: string;
+  transcript_source?: "none" | "realtime" | "pasted" | string;
+  realtime_transcription_available?: boolean;
 };
 
 export type ScreeningAnalysis = {
@@ -208,6 +212,11 @@ export type ScreeningAnalysis = {
     score: number;
     evidence: string[];
     assessment: string;
+    relevance?: string | null;
+    completeness?: string | null;
+    technical_evidence?: string[];
+    missing_information?: string[];
+    suggested_follow_up?: string | null;
   }>;
   strengths: string[];
   concerns: string[];
