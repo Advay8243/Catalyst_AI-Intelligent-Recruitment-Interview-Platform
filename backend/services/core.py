@@ -675,11 +675,9 @@ class CandidateService:
     def list_candidates(self, job_id: uuid.UUID | None = None, **filters) -> Page:
         if job_id is not None and not self.jobs.get(job_id):
             raise NotFoundError("Job not found")
-        # Shortlisted screening results never include AI Calculated Score below 60.
+        # Optional score filter only; default listing shows all scored candidates.
         requested_min = filters.get("min_score")
-        effective_min = SHORTLIST_MIN_SCORE
-        if requested_min is not None:
-            effective_min = max(SHORTLIST_MIN_SCORE, int(requested_min))
+        effective_min = int(requested_min) if requested_min is not None else None
         rows, total = self.candidates.list_for_job(
             job_id=job_id,
             page=filters["page"],

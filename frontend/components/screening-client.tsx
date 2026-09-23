@@ -8,7 +8,6 @@ import {
   Columns3,
   FileText,
   LoaderCircle,
-  MoreHorizontal,
   Phone,
   Plus,
   RefreshCw,
@@ -55,10 +54,6 @@ export function ScreeningClient() {
   const [searchingJobs, setSearchingJobs] = useState(false);
   const [jobId, setJobId] = useState(initialJobId);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-  const [decisionStatus, setDecisionStatus] = useState("");
-  const [screeningStatus, setScreeningStatus] = useState("");
-  const [emailStatus, setEmailStatus] = useState("");
-  const [minScore, setMinScore] = useState("");
   const [sortBy, setSortBy] = useState("jdScore");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -70,7 +65,6 @@ export function ScreeningClient() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [comparison, setComparison] = useState<CandidateComparison | null>(null);
   const [comparing, setComparing] = useState(false);
-  const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [scoresReady, setScoresReady] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState(0);
@@ -119,13 +113,9 @@ export function ScreeningClient() {
     page,
     pageSize: PAGE_SIZE,
     jobId: jobId || undefined,
-    decisionStatus,
-    screeningStatus,
-    emailStatus,
-    minScore: minScore || "60",
     sortBy,
     sortOrder,
-  }), [page, jobId, decisionStatus, screeningStatus, emailStatus, minScore, sortBy, sortOrder]);
+  }), [page, jobId, sortBy, sortOrder]);
 
   const loadCandidates = useCallback(async () => {
     if (!jobId || !scoresReady) {
@@ -207,9 +197,7 @@ export function ScreeningClient() {
       setSortOrder("desc");
       setRefreshKey((key) => key + 1);
       showNotice(
-        `Analyzed ${result.analyzed_count} resume${result.analyzed_count === 1 ? "" : "s"}. `
-        + `${result.shortlisted_count} shortlisted (≥60). `
-        + `${result.skipped_below_threshold} below threshold remain stored but hidden.`,
+        `Analyzed ${result.analyzed_count} resume${result.analyzed_count === 1 ? "" : "s"} against this JD.`,
       );
     } catch (caught) {
       showNotice(friendlyErrorMessage(caught, "Could not generate AI scores."), true);
@@ -231,7 +219,7 @@ export function ScreeningClient() {
 
   const runCompare = async () => {
     if (selectedIds.length < 2 || !jobId) {
-      showNotice("Select at least two shortlisted candidates to compare.", true);
+      showNotice("Select at least two candidates to compare.", true);
       return;
     }
     setComparing(true);
@@ -253,7 +241,7 @@ export function ScreeningClient() {
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs font-medium text-[#98a2b3]"><span>Recruitment</span><span>/</span><span className="text-[#667085]">Candidate Screening</span></div>
             <h1 className="text-2xl font-bold tracking-tight text-[#101828]">Candidate Screening</h1>
-            <p className="mt-1 text-sm text-[#667085]">Select a JD, generate AI Calculated Scores, then review shortlisted candidates (≥60).</p>
+            <p className="mt-1 text-sm text-[#667085]">Select a JD, generate AI Calculated Scores, then review every scored candidate.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => setUploadKind("jd")}><FileText className="size-4" />Upload / paste JD</Button>
@@ -351,26 +339,6 @@ export function ScreeningClient() {
             <section className="rounded-xl border bg-white p-3 shadow-panel">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-[#fff0f7] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">Step 2–4</span>
-                <select aria-label="Filter by decision status" value={decisionStatus} onChange={(event) => { setDecisionStatus(event.target.value); setPage(1); }} className="h-9 rounded-lg border bg-white px-2 text-sm shadow-sm">
-                  <option value="">Decision</option>
-                  <option value="pending">Pending</option>
-                  <option value="accepted">Accepted</option>
-                  <option value="advanced">Advanced</option>
-                  <option value="rejected">Rejected</option>
-                  <option value="needs_review">Needs Review</option>
-                </select>
-                <select aria-label="Filter by HR screening status" value={screeningStatus} onChange={(event) => { setScreeningStatus(event.target.value); setPage(1); }} className="h-9 rounded-lg border bg-white px-2 text-sm shadow-sm">
-                  <option value="">Screening</option>
-                  <option value="not_screened">Not Screened</option>
-                  <option value="screening_in_progress">In Progress</option>
-                  <option value="awaiting_hr_decision">HR Screened</option>
-                </select>
-                <select aria-label="Minimum AI Calculated Score" value={minScore} onChange={(event) => { setMinScore(event.target.value); setPage(1); }} className="h-9 rounded-lg border bg-white px-2 text-sm shadow-sm">
-                  <option value="">Score ≥60</option>
-                  <option value="70">70+</option>
-                  <option value="80">80+</option>
-                  <option value="90">90+</option>
-                </select>
                 <select aria-label="Sort candidates" value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1); }} className="h-9 rounded-lg border bg-white px-2 text-sm shadow-sm">
                   <option value="jdScore">Sort: AI score</option>
                   <option value="hrScore">Sort: HR score</option>
@@ -379,27 +347,15 @@ export function ScreeningClient() {
                   <option value="decision">Sort: Decision</option>
                 </select>
                 <Button variant="secondary" size="icon" aria-label={`Sort ${sortOrder === "desc" ? "descending" : "ascending"}`} onClick={() => setSortOrder((order) => order === "desc" ? "asc" : "desc")}>{sortOrder === "desc" ? <ArrowDown className="size-4" /> : <ArrowUp className="size-4" />}</Button>
-                <Button variant="ghost" size="sm" onClick={() => setShowMoreFilters((value) => !value)}><MoreHorizontal className="size-4" />More</Button>
               </div>
-              {showMoreFilters && (
-                <div className="mt-2 flex flex-wrap gap-2 border-t pt-2">
-                  <select aria-label="Filter by email status" value={emailStatus} onChange={(event) => { setEmailStatus(event.target.value); setPage(1); }} className="h-9 rounded-lg border bg-white px-2 text-sm shadow-sm">
-                    <option value="">Email status</option>
-                    <option value="not_sent">Not Sent</option>
-                    <option value="draft">Draft</option>
-                    <option value="sent">Sent</option>
-                    <option value="failed">Failed</option>
-                  </select>
-                </div>
-              )}
             </section>
 
             <section className="overflow-hidden rounded-xl border bg-white shadow-panel">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
                 <div>
-                  <h2 className="font-semibold text-[#101828]">Shortlisted Candidates</h2>
+                  <h2 className="font-semibold text-[#101828]">Candidates</h2>
                   <p className="mt-0.5 text-xs text-[#667085]">
-                    {loading ? "Loading…" : `${total} shortlisted (≥60)`}
+                    {loading ? "Loading…" : `${total} candidate${total === 1 ? "" : "s"} with AI scores`}
                     {totalUploaded != null ? ` · ${totalUploaded} uploaded for this JD` : ""}
                   </p>
                 </div>
@@ -466,8 +422,8 @@ export function ScreeningClient() {
               {!loading && !error && candidates.length === 0 && (
                 <EmptyState
                   icon={<FileText className="size-6" />}
-                  title="No shortlisted candidates"
-                  description="Upload resumes for this JD, then generate AI scores. Only candidates scoring 60+ appear here."
+                  title="No scored candidates"
+                  description="Upload resumes for this JD, then generate AI scores to see every candidate’s AI Calculated Score here."
                   action={<Button onClick={() => setUploadKind("resume")}><Plus className="size-4" />Upload resumes</Button>}
                 />
               )}
@@ -489,7 +445,7 @@ export function ScreeningClient() {
           <EmptyState
             icon={<Sparkles className="size-6" />}
             title="Generate AI Calculated Scores"
-            description="Resumes stay stored. Use Generate AI Scores above to thoroughly analyze them against this JD. Only scores ≥60 will appear in Shortlisted Candidates."
+            description="Resumes stay stored. Use Generate AI Scores above to thoroughly analyze them against this JD and list every candidate with an AI Calculated Score."
           />
         )}
       </div>

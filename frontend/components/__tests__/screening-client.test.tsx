@@ -77,7 +77,7 @@ describe("ScreeningClient", () => {
     }));
   });
 
-  it("selects a JD, generates scores, and shows shortlisted results", async () => {
+  it("selects a JD, generates scores, and shows candidate results", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ScreeningClient />);
@@ -86,7 +86,7 @@ describe("ScreeningClient", () => {
     await user.click(screen.getByRole("button", { name: "Generate AI Scores" }));
     expect(screen.getByText(/Analyzing resumes thoroughly/i)).toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(4600);
-    expect(await screen.findByText("Shortlisted Candidates")).toBeInTheDocument();
+    expect(await screen.findByText("Candidates")).toBeInTheDocument();
     expect(await screen.findByText("Maya Chen")).toBeInTheDocument();
     expect(screen.getByText("AI Calculated Score")).toBeInTheDocument();
     expect(screen.getByText("AI Suggestion — Why Fits / Not Fits")).toBeInTheDocument();
@@ -107,7 +107,7 @@ describe("ScreeningClient", () => {
     vi.useRealTimers();
   });
 
-  it("applies compact filters to the shortlisted query", async () => {
+  it("loads candidates without a default min_score filter", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ScreeningClient />);
@@ -115,13 +115,11 @@ describe("ScreeningClient", () => {
     await user.click(screen.getByRole("button", { name: "Generate AI Scores" }));
     await vi.advanceTimersByTimeAsync(4600);
     await screen.findByText("Maya Chen");
-    await user.selectOptions(screen.getByLabelText("Filter by decision status"), "advanced");
-    await user.selectOptions(screen.getByLabelText("Minimum AI Calculated Score"), "80");
     await waitFor(() => {
       const calls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      expect(
-        calls.some((url) => url.includes("decision_status=advanced") && url.includes("min_score=80")),
-      ).toBe(true);
+      const candidateCalls = calls.filter((url) => url.includes("/candidates?"));
+      expect(candidateCalls.length).toBeGreaterThan(0);
+      expect(candidateCalls.every((url) => !url.includes("min_score="))).toBe(true);
     });
     vi.useRealTimers();
   });
