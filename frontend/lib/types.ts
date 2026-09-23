@@ -101,11 +101,49 @@ export type CandidateQuery = {
   search?: string;
   jobId?: string;
   status?: string;
+  decisionStatus?: string;
   screeningStatus?: string;
+  emailStatus?: string;
   minScore?: string;
   maxScore?: string;
+  minHrScore?: string;
+  maxHrScore?: string;
+  uploadedFrom?: string;
+  uploadedTo?: string;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
+};
+
+export type CandidateComparisonItem = {
+  candidateId: string;
+  fullName: string;
+  email: string;
+  jobId: string;
+  jobTitle: string;
+  jdScore: number | null;
+  hrScore: number | null;
+  requiredSkillsScore: number | null;
+  preferredSkillsScore: number | null;
+  experienceScore: number | null;
+  responsibilitiesScore: number | null;
+  educationScore: number | null;
+  matchedRequiredSkills: string[];
+  matchedPreferredSkills: string[];
+  missingRequiredSkills: string[];
+  experienceYears: number | null;
+  education: string[];
+  strengths: string[];
+  missingInformation: string[];
+  aiRecommendation: string | null;
+  humanDecision: string;
+  scoreBreakdown?: ScoreBreakdown;
+  fitReason?: string | null;
+};
+
+export type CandidateComparison = {
+  jobId: string;
+  jobTitle: string;
+  items: CandidateComparisonItem[];
 };
 
 export type PaginatedCandidates = {

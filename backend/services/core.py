@@ -13,6 +13,8 @@ from backend.repositories import CandidateRepository, JobRepository
 from backend.schemas import (
     BatchResumeItemResult,
     BatchResumeUploadResult,
+    CandidateComparisonItem,
+    CandidateComparisonResponse,
     CandidateListItem,
     JDRequirements,
     JobCreate,
@@ -481,7 +483,10 @@ class CandidateService:
         return candidate
 
     def list_for_job(self, job_id: uuid.UUID, **filters) -> Page:
-        if not self.jobs.get(job_id):
+        return self.list_candidates(job_id=job_id, **filters)
+
+    def list_candidates(self, job_id: uuid.UUID | None = None, **filters) -> Page:
+        if job_id is not None and not self.jobs.get(job_id):
             raise NotFoundError("Job not found")
         rows, total = self.candidates.list_for_job(
             job_id=job_id,
@@ -489,9 +494,15 @@ class CandidateService:
             page_size=filters["page_size"],
             search=filters.get("search"),
             status=filters.get("status"),
+            decision_status=filters.get("decision_status"),
             min_score=filters.get("min_score"),
             max_score=filters.get("max_score"),
+            min_hr_score=filters.get("min_hr_score"),
+            max_hr_score=filters.get("max_hr_score"),
             screening_status=filters.get("screening_status"),
+            email_status=filters.get("email_status"),
+            uploaded_from=filters.get("uploaded_from"),
+            uploaded_to=filters.get("uploaded_to"),
             sort=filters["sort"],
             order=filters["order"],
         )
@@ -568,6 +579,99 @@ class CandidateService:
             page=filters["page"],
             page_size=filters["page_size"],
             total=total,
+        )
+
+    def compare(
+        self, job_id: uuid.UUID, candidate_ids: list[uuid.UUID]
+    ) -> CandidateComparisonResponse:
+        job = self.jobs.get(job_id)
+        if not job:
+            raise NotFoundError("Job not found")
+        unique_ids = list(dict.fromkeys(candidate_ids))
+        if len(unique_ids) < 2:
+            raise ValueError("Select at least two candidates to compare")
+        if len(unique_ids) > 5:
+            raise ValueError("Compare supports at most five candidates")
+        rows = self.candidates.comparison_rows(job_id, unique_ids)
+        found_ids = {row[0].id for row in rows}
+        missing = [str(cid) for cid in unique_ids if cid not in found_ids]
+        if missing:
+            raise NotFoundError(
+                f"Candidate application not found for this job: {', '.join(missing)}"
+            )
+        requirements = (job.requirements.structured_data if job.requirements else {}) or {}
+        required_skills = [str(item) for item in requirements.get("required_skills") or []]
+        preferred_skills = [str(item) for item in requirements.get("preferred_skills") or []]
+        items: list[CandidateComparisonItem] = []
+        for candidate, application, _job, analysis, hr_analysis, _req in rows:
+            profile = candidate.profile or {}
+            scoring = (analysis.scoring if analysis else {}) or {}
+            details = scoring.get("match_details") or {}
+            candidate_skills = [str(item) for item in profile.get("skills") or []]
+            skill_set = {skill.casefold() for skill in candidate_skills}
+            matched_required = [
+                skill for skill in required_skills if skill.casefold() in skill_set
+            ]
+            matched_preferred = [
+                skill for skill in preferred_skills if skill.casefold() in skill_set
+            ]
+            missing_required = [
+                skill for skill in required_skills if skill.casefold() not in skill_set
+            ]
+            missing_from_match = [str(item) for item in details.get("missing_skills") or []]
+            missing_information: list[str] = []
+            strengths: list[str] = []
+            if hr_analysis:
+                strengths = [str(item) for item in (hr_analysis.strengths or [])]
+                for question in hr_analysis.question_analysis or []:
+                    if isinstance(question, dict):
+                        for item in question.get("missing_information") or []:
+                            missing_information.append(str(item))
+            if not missing_information and missing_required:
+                missing_information = [f"Missing required skill: {skill}" for skill in missing_required]
+            elif missing_from_match:
+                for skill in missing_from_match:
+                    label = f"Missing skill: {skill}"
+                    if label not in missing_information:
+                        missing_information.append(label)
+            breakdown = self._score_breakdown(
+                scoring if analysis else None,
+                analysis.explanation if analysis else None,
+            )
+            items.append(
+                CandidateComparisonItem(
+                    candidate_id=candidate.id,
+                    full_name=candidate.full_name,
+                    email=candidate.email,
+                    job_id=job_id,
+                    job_title=job.title,
+                    jd_score=analysis.overall_score if analysis else None,
+                    hr_score=hr_analysis.overall_score if hr_analysis else None,
+                    required_skills_score=details.get("required_skill_score"),
+                    preferred_skills_score=details.get("preferred_skill_score"),
+                    experience_score=(scoring.get("experience") or {}).get("score"),
+                    responsibilities_score=details.get("responsibilities_score"),
+                    education_score=details.get("education_certification_score")
+                    or (scoring.get("education") or {}).get("score"),
+                    matched_required_skills=matched_required,
+                    matched_preferred_skills=matched_preferred,
+                    missing_required_skills=missing_required,
+                    experience_years=profile.get("years_experience")
+                    if profile.get("years_experience") is not None
+                    else profile.get("experience_years"),
+                    education=[str(item) for item in profile.get("education") or []],
+                    strengths=strengths,
+                    missing_information=missing_information,
+                    ai_recommendation=hr_analysis.recommendation if hr_analysis else None,
+                    human_decision=application.decision or "pending",
+                    score_breakdown=breakdown,
+                    fit_reason=analysis.explanation if analysis else None,
+                )
+            )
+        return CandidateComparisonResponse(
+            job_id=job_id,
+            job_title=job.title,
+            items=items,
         )
 
     def analysis(self, candidate_id: uuid.UUID, job_id: uuid.UUID | None):

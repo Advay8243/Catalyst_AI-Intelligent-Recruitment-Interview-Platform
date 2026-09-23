@@ -2,6 +2,7 @@ import type {
   BatchResumeResult,
   CallSession,
   Candidate,
+  CandidateComparison,
   CandidateQuery,
   CandidateReview,
   DashboardActivity,
@@ -98,34 +99,129 @@ function normalizeCandidate(raw: Record<string, unknown>): Candidate {
 }
 
 export async function getCandidates(query: CandidateQuery): Promise<PaginatedCandidates> {
-  if (!query.jobId) {
-    return { items: [], total: 0, page: query.page, pageSize: query.pageSize };
-  }
   const params = new URLSearchParams();
   params.set("page", String(query.page));
   params.set("page_size", String(query.pageSize));
+  if (query.jobId) params.set("job_id", query.jobId);
   if (query.search) params.set("search", query.search);
   if (query.status) params.set("status", query.status);
+  if (query.decisionStatus) params.set("decision_status", query.decisionStatus);
   if (query.screeningStatus) params.set("screening_status", query.screeningStatus);
+  if (query.emailStatus) params.set("email_status", query.emailStatus);
   if (query.minScore) params.set("min_score", query.minScore);
   if (query.maxScore) params.set("max_score", query.maxScore);
+  if (query.minHrScore) params.set("min_hr_score", query.minHrScore);
+  if (query.maxHrScore) params.set("max_hr_score", query.maxHrScore);
+  if (query.uploadedFrom) params.set("uploaded_from", query.uploadedFrom);
+  if (query.uploadedTo) params.set("uploaded_to", query.uploadedTo);
   const sortMap: Record<string, string> = {
     jdScore: "score",
     hrScore: "hr_score",
     createdAt: "created_at",
     name: "name",
+    decision: "decision",
+    decisionStatus: "decision",
   };
   params.set("sort", sortMap[query.sortBy ?? "jdScore"] ?? "score");
   params.set("order", query.sortOrder ?? "desc");
-  const raw = await request<Record<string, unknown>>(
-    `/jobs/${encodeURIComponent(query.jobId)}/candidates?${params}`,
-  );
+  const raw = await request<Record<string, unknown>>(`/candidates?${params}`);
   const list = (raw.items ?? raw.results ?? raw.candidates ?? []) as Record<string, unknown>[];
   return {
     items: list.map(normalizeCandidate),
     total: Number(raw.total ?? raw.count ?? list.length),
     page: Number(raw.page ?? query.page),
     pageSize: Number(raw.pageSize ?? raw.page_size ?? query.pageSize),
+  };
+}
+
+export async function compareCandidates(
+  jobId: string,
+  candidateIds: string[],
+): Promise<CandidateComparison> {
+  const params = new URLSearchParams();
+  for (const id of candidateIds) params.append("ids", id);
+  const raw = await request<Record<string, unknown>>(
+    `/jobs/${encodeURIComponent(jobId)}/candidates/compare?${params}`,
+  );
+  const items = (raw.items ?? []) as Record<string, unknown>[];
+  return {
+    jobId: String(raw.jobId ?? raw.job_id ?? jobId),
+    jobTitle: String(raw.jobTitle ?? raw.job_title ?? ""),
+    items: items.map((item) => ({
+      candidateId: String(item.candidateId ?? item.candidate_id ?? ""),
+      fullName: String(item.fullName ?? item.full_name ?? ""),
+      email: String(item.email ?? ""),
+      jobId: String(item.jobId ?? item.job_id ?? jobId),
+      jobTitle: String(item.jobTitle ?? item.job_title ?? ""),
+      jdScore: item.jdScore != null ? Number(item.jdScore) : item.jd_score != null ? Number(item.jd_score) : null,
+      hrScore: item.hrScore != null ? Number(item.hrScore) : item.hr_score != null ? Number(item.hr_score) : null,
+      requiredSkillsScore:
+        item.requiredSkillsScore != null
+          ? Number(item.requiredSkillsScore)
+          : item.required_skills_score != null
+            ? Number(item.required_skills_score)
+            : null,
+      preferredSkillsScore:
+        item.preferredSkillsScore != null
+          ? Number(item.preferredSkillsScore)
+          : item.preferred_skills_score != null
+            ? Number(item.preferred_skills_score)
+            : null,
+      experienceScore:
+        item.experienceScore != null
+          ? Number(item.experienceScore)
+          : item.experience_score != null
+            ? Number(item.experience_score)
+            : null,
+      responsibilitiesScore:
+        item.responsibilitiesScore != null
+          ? Number(item.responsibilitiesScore)
+          : item.responsibilities_score != null
+            ? Number(item.responsibilities_score)
+            : null,
+      educationScore:
+        item.educationScore != null
+          ? Number(item.educationScore)
+          : item.education_score != null
+            ? Number(item.education_score)
+            : null,
+      matchedRequiredSkills: Array.isArray(item.matchedRequiredSkills)
+        ? item.matchedRequiredSkills.map(String)
+        : Array.isArray(item.matched_required_skills)
+          ? item.matched_required_skills.map(String)
+          : [],
+      matchedPreferredSkills: Array.isArray(item.matchedPreferredSkills)
+        ? item.matchedPreferredSkills.map(String)
+        : Array.isArray(item.matched_preferred_skills)
+          ? item.matched_preferred_skills.map(String)
+          : [],
+      missingRequiredSkills: Array.isArray(item.missingRequiredSkills)
+        ? item.missingRequiredSkills.map(String)
+        : Array.isArray(item.missing_required_skills)
+          ? item.missing_required_skills.map(String)
+          : [],
+      experienceYears:
+        item.experienceYears != null
+          ? Number(item.experienceYears)
+          : item.experience_years != null
+            ? Number(item.experience_years)
+            : null,
+      education: Array.isArray(item.education) ? item.education.map(String) : [],
+      strengths: Array.isArray(item.strengths) ? item.strengths.map(String) : [],
+      missingInformation: Array.isArray(item.missingInformation)
+        ? item.missingInformation.map(String)
+        : Array.isArray(item.missing_information)
+          ? item.missing_information.map(String)
+          : [],
+      aiRecommendation:
+        item.aiRecommendation != null
+          ? String(item.aiRecommendation)
+          : item.ai_recommendation != null
+            ? String(item.ai_recommendation)
+            : null,
+      humanDecision: String(item.humanDecision ?? item.human_decision ?? "pending"),
+      fitReason: item.fitReason != null ? String(item.fitReason) : item.fit_reason != null ? String(item.fit_reason) : null,
+    })),
   };
 }
 

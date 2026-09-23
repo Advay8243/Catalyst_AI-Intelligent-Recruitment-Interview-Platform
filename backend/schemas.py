@@ -172,6 +172,38 @@ class Page(BaseModel):
     total: int
 
 
+class CandidateComparisonItem(BaseModel):
+    candidate_id: uuid.UUID
+    full_name: str
+    email: EmailStr
+    job_id: uuid.UUID
+    job_title: str
+    jd_score: int | None = None
+    hr_score: int | None = None
+    required_skills_score: int | None = None
+    preferred_skills_score: int | None = None
+    experience_score: int | None = None
+    responsibilities_score: int | None = None
+    education_score: int | None = None
+    matched_required_skills: list[str] = Field(default_factory=list)
+    matched_preferred_skills: list[str] = Field(default_factory=list)
+    missing_required_skills: list[str] = Field(default_factory=list)
+    experience_years: int | None = None
+    education: list[str] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    ai_recommendation: str | None = None
+    human_decision: str = "pending"
+    score_breakdown: ScoreBreakdown | None = None
+    fit_reason: str | None = None
+
+
+class CandidateComparisonResponse(BaseModel):
+    job_id: uuid.UUID
+    job_title: str
+    items: list[CandidateComparisonItem]
+
+
 class AnalysisRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
