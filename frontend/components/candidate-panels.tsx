@@ -101,7 +101,7 @@ export function ScoreDrawer({
     ["Role relevance", breakdown?.relevance],
   ] as const;
   return (
-    <Drawer open={open} onOpenChange={onOpenChange} title={type === "jd" ? "JD → Resume Score" : "HR Screening Analysis"} description={`${candidate.name} · ${candidate.jobTitle ?? "Selected job"}`}>
+    <Drawer open={open} onOpenChange={onOpenChange} title={type === "jd" ? "AI Calculated Score" : "HR Screening Analysis"} description={`${candidate.name} · ${candidate.jobTitle ?? "Selected job"}`}>
       <div className="mt-6 border-y bg-[#fafbfc] p-6">
         <p className="text-sm text-[#667085]">Overall score</p>
         <div className="mt-2 flex items-end gap-2">
@@ -146,8 +146,29 @@ export function ScoreDrawer({
               </section>
             ) : null}
             <section className="rounded-xl bg-[#f8f9fb] p-4">
-              <h3 className="mb-2 text-sm font-semibold">Why Candidate Fits</h3>
-              <p className="text-sm leading-6 text-[#667085]">{breakdown?.summary ?? candidate.fitReason}</p>
+              <h3 className="mb-3 text-sm font-semibold">AI Suggestion — Why Fits / Not Fits</h3>
+              {(candidate.fitPoints?.length || candidate.gapPoints?.length) ? (
+                <div className="space-y-3 text-sm text-[#667085]">
+                  {!!candidate.fitPoints?.length && (
+                    <div>
+                      <p className="mb-1 font-semibold text-green-800">Fits</p>
+                      <ul className="list-disc space-y-1 pl-5">
+                        {candidate.fitPoints.map((point) => <li key={point}>{point}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {!!candidate.gapPoints?.length && (
+                    <div>
+                      <p className="mb-1 font-semibold text-amber-800">Does Not Fit / Gaps</p>
+                      <ul className="list-disc space-y-1 pl-5">
+                        {candidate.gapPoints.map((point) => <li key={point}>{point}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm leading-6 text-[#667085]">{breakdown?.summary ?? candidate.fitReason}</p>
+              )}
             </section>
           </>
         )}

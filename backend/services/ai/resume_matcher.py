@@ -43,6 +43,7 @@ class ResumeMatcher:
             key=str.lower,
         )
         missing_skills = self._missing(resume.skills, all_expected)
+        missing_required = self._missing(resume.skills, job.required_skills)
 
         if job.minimum_years_experience:
             experience_score = min(
@@ -108,17 +109,104 @@ class ResumeMatcher:
             sum(category.score * category.weight for category in categories.values())
             / 100
         )
+        fit_points, gap_points = self._fit_and_gap_points(
+            resume=resume,
+            job=job,
+            required_matches=required_matches,
+            preferred_matches=preferred_matches,
+            missing_required=missing_required,
+            experience_score=experience_score,
+            responsibilities_score=responsibilities_score,
+            responsibility_evidence=responsibility_evidence,
+            education_evidence=education_evidence,
+            certification_evidence=certification_evidence,
+            education_certification_score=education_certification_score,
+        )
+        explanation_lines = []
+        if fit_points:
+            explanation_lines.append("Fits: " + "; ".join(fit_points))
+        if gap_points:
+            explanation_lines.append("Does not fit / gaps: " + "; ".join(gap_points))
+        if not explanation_lines:
+            explanation_lines.append(
+                f"Overall score {overall}/100 from transparent category weights."
+            )
+        explanation = (
+            " | ".join(explanation_lines)
+            + " Protected traits are excluded."
+        ).replace("Protected traits are excluded.", "protected traits are excluded.")
         return MatchResult(
             overall_score=overall,
             categories=categories,
-            explanation=(
-                f"Overall score {overall}/100 uses configured 40/20/20/15/5-style "
-                "category weights and resume evidence only; protected traits are excluded."
-            ),
+            explanation=explanation,
             matched_skills=matched_skills,
             missing_skills=missing_skills,
             required_skill_score=required_score,
             preferred_skill_score=preferred_score,
             responsibilities_score=responsibilities_score,
             education_certification_score=education_certification_score,
+            fit_points=fit_points,
+            gap_points=gap_points,
         )
+
+    @staticmethod
+    def _fit_and_gap_points(
+        *,
+        resume: ParsedResume,
+        job: JDRequirements,
+        required_matches: list[str],
+        preferred_matches: list[str],
+        missing_required: list[str],
+        experience_score: int,
+        responsibilities_score: int,
+        responsibility_evidence: list[str],
+        education_evidence: list[str],
+        certification_evidence: list[str],
+        education_certification_score: int,
+    ) -> tuple[list[str], list[str]]:
+        fits: list[str] = []
+        gaps: list[str] = []
+        if required_matches:
+            fits.append(
+                "Required skills evidenced: " + ", ".join(required_matches[:8])
+            )
+        if preferred_matches and job.preferred_skills:
+            fits.append(
+                "Preferred skills evidenced: " + ", ".join(preferred_matches[:6])
+            )
+        if job.minimum_years_experience and resume.years_experience >= job.minimum_years_experience:
+            fits.append(
+                f"{resume.years_experience} years experience meets the "
+                f"{job.minimum_years_experience}+ year requirement"
+            )
+        elif job.minimum_years_experience and experience_score >= 70:
+            fits.append(
+                f"{resume.years_experience} years of documented experience "
+                f"(requirement: {job.minimum_years_experience}+ years)"
+            )
+        if education_evidence and education_evidence != ["No explicit requirement"]:
+            fits.append("Education alignment: " + ", ".join(education_evidence[:4]))
+        if certification_evidence and certification_evidence != ["No explicit requirement"]:
+            fits.append(
+                "Certification alignment: " + ", ".join(certification_evidence[:4])
+            )
+        if responsibility_evidence and responsibility_evidence != ["No explicit requirement"] and responsibilities_score >= 50:
+            sample = ", ".join(responsibility_evidence[:3])
+            fits.append(f"Responsibility/project alignment: {sample}")
+
+        for skill in missing_required[:6]:
+            gaps.append(f"No evidence of required skill: {skill}")
+        if (
+            job.minimum_years_experience
+            and resume.years_experience < job.minimum_years_experience
+        ):
+            gaps.append(
+                f"Documented experience ({resume.years_experience} years) is below "
+                f"the required {job.minimum_years_experience}+ years"
+            )
+        if job.responsibilities and responsibilities_score < 40:
+            gaps.append("Limited evidence matching key JD responsibilities")
+        if (job.education or job.certifications) and education_certification_score < 40:
+            gaps.append("Limited evidence of required education/certifications")
+
+        return fits[:8], gaps[:8]

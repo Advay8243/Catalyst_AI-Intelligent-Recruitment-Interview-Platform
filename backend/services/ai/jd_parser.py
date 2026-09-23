@@ -82,7 +82,7 @@ class JDParser:
             if option in lowered:
                 employment_type = option
                 break
-        return JDRequirements(
+        requirements = JDRequirements(
             title=inferred_title,
             department=department,
             location=location,
@@ -96,6 +96,86 @@ class JDParser:
             minimum_years_experience=int(years_match.group(1)) if years_match else 0,
             industries=industries,
         )
+        return requirements.model_copy(
+            update={"summary_bullets": self.summarize(text, requirements)}
+        )
+
+    def summarize(self, text: str, requirements: JDRequirements) -> list[str]:
+        """Build 5–10 evidence-based JD bullets; never invent requirements."""
+        bullets: list[str] = []
+        role = requirements.title.strip()
+        if role and role.lower() not in {"untitled role"}:
+            bullets.append(f"Role: {role}")
+        if requirements.experience_required:
+            bullets.append(
+                f"{requirements.experience_required} of relevant experience required"
+            )
+        elif requirements.minimum_years_experience:
+            bullets.append(
+                f"{requirements.minimum_years_experience}+ years of relevant experience required"
+            )
+        if requirements.required_skills:
+            bullets.append(
+                "Required skills: " + ", ".join(requirements.required_skills[:8])
+            )
+        if requirements.preferred_skills:
+            bullets.append(
+                "Preferred skills: " + ", ".join(requirements.preferred_skills[:6])
+            )
+        for item in requirements.responsibilities[:4]:
+            cleaned = item.strip()
+            if cleaned and cleaned not in bullets:
+                bullets.append(cleaned[:180])
+        if requirements.education:
+            bullets.append(
+                "Education: " + ", ".join(requirements.education[:4])
+            )
+        if requirements.certifications:
+            bullets.append(
+                "Certifications: " + ", ".join(requirements.certifications[:4])
+            )
+        if requirements.industries:
+            bullets.append(
+                "Domain: " + ", ".join(requirements.industries[:4])
+            )
+        if requirements.employment_type:
+            bullets.append(f"Employment type: {requirements.employment_type}")
+        if requirements.location:
+            bullets.append(f"Location: {requirements.location}")
+        for extra in requirements.other_requirements[:3]:
+            if extra.strip():
+                bullets.append(extra.strip()[:180])
+
+        # If still thin, pull concise non-duplicate lines from the source text.
+        if len(bullets) < 5:
+            for line in self._concise_source_lines(text):
+                if line.lower() in {b.lower() for b in bullets}:
+                    continue
+                bullets.append(line)
+                if len(bullets) >= 5:
+                    break
+
+        # Combine related trailing items if we exceed 10.
+        while len(bullets) > 10:
+            last = bullets.pop()
+            bullets[-1] = f"{bullets[-1]}; {last}"[:220]
+        return bullets[:10]
+
+    @staticmethod
+    def _concise_source_lines(text: str) -> list[str]:
+        items: list[str] = []
+        for raw in text.splitlines():
+            cleaned = re.sub(r"^[\-\*\u2022\d\.\)\s]+", "", raw).strip()
+            if len(cleaned) < 24:
+                continue
+            if cleaned.lower().startswith(("http://", "https://", "www.")):
+                continue
+            items.append(cleaned[:180])
+        if items:
+            return items
+        # Paragraph JD: split on sentence boundaries.
+        sentences = re.split(r"(?<=[.!?])\s+", " ".join(text.split()))
+        return [sentence.strip()[:180] for sentence in sentences if len(sentence.strip()) >= 24]
 
     @staticmethod
     def _find_skills(lowered: str) -> list[str]:

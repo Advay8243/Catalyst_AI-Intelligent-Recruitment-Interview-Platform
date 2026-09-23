@@ -24,6 +24,7 @@ class JDRequirements(BaseModel):
     minimum_years_experience: int = 0
     industries: list[str] = Field(default_factory=list)
     other_requirements: list[str] = Field(default_factory=list)
+    summary_bullets: list[str] = Field(default_factory=list, min_length=0, max_length=10)
 
 
 class ParsedResume(BaseModel):
@@ -57,6 +58,8 @@ class MatchResult(BaseModel):
     preferred_skill_score: int = 0
     responsibilities_score: int = 0
     education_certification_score: int = 0
+    fit_points: list[str] = Field(default_factory=list)
+    gap_points: list[str] = Field(default_factory=list)
 
 
 class JobCreate(BaseModel):
@@ -148,6 +151,8 @@ class CandidateListItem(CandidateRead):
     jd_score: int | None
     hr_score: int | None = None
     fit_reason: str
+    fit_points: list[str] = Field(default_factory=list)
+    gap_points: list[str] = Field(default_factory=list)
     job_id: uuid.UUID
     job_title: str
     call_status: str | None = None
@@ -170,6 +175,8 @@ class Page(BaseModel):
     page: int
     page_size: int
     total: int
+    total_uploaded: int | None = None
+    shortlisted_threshold: int = 60
 
 
 class CandidateComparisonItem(BaseModel):
@@ -202,6 +209,36 @@ class CandidateComparisonResponse(BaseModel):
     job_id: uuid.UUID
     job_title: str
     items: list[CandidateComparisonItem]
+
+
+class ScoringCriterion(BaseModel):
+    key: str
+    label: str
+    weight_percent: int
+    description: str
+
+
+class ScoringCriteriaResponse(BaseModel):
+    criteria: list[ScoringCriterion]
+    signals: list[str]
+    note: str
+
+
+class JobSearchHit(BaseModel):
+    job: JobRead
+    similarity: float = Field(ge=0.0, le=1.0)
+
+
+class JobSearchResponse(BaseModel):
+    query: str
+    items: list[JobSearchHit]
+
+
+class GenerateScoresResult(BaseModel):
+    job_id: uuid.UUID
+    analyzed_count: int
+    shortlisted_count: int
+    skipped_below_threshold: int
 
 
 class AnalysisRead(BaseModel):

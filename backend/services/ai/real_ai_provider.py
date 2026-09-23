@@ -51,10 +51,13 @@ class LLMJDExtraction(BaseModel):
     certifications: list[str] = Field(default_factory=list)
     industries: list[str] = Field(default_factory=list)
     other_requirements: list[str] = Field(default_factory=list)
+    summary_bullets: list[str] = Field(default_factory=list)
 
 
 class LLMFitExplanation(BaseModel):
-    why_candidate_fits: str = Field(min_length=20, max_length=2000)
+    fit_points: list[str] = Field(default_factory=list, max_length=10)
+    gap_points: list[str] = Field(default_factory=list, max_length=10)
+    why_candidate_fits: str | None = Field(default=None, max_length=2000)
     evidence_points: list[str] = Field(default_factory=list, max_length=12)
 
 
@@ -120,7 +123,10 @@ class RealAIProvider(AIProvider):
             "Return JSON with keys: title, department, location, employment_type, "
             "experience_required, minimum_years_experience, required_skills, "
             "preferred_skills, responsibilities, education, certifications, "
-            "industries, other_requirements.\n"
+            "industries, other_requirements, summary_bullets. "
+            "summary_bullets must be 5-10 concise bullets capturing only facts "
+            "present in the JD (role, skills, experience, responsibilities, "
+            "education/certs, domain/tools). Do not invent requirements.\n"
             f"Suggested title override: {title or 'none'}\n\n"
             f"JD:\n{truncated}"
         )
@@ -130,7 +136,9 @@ class RealAIProvider(AIProvider):
             user_prompt=user,
             schema=LLMJDExtraction,
         )
-        return JDRequirements(
+        from backend.services.ai.jd_parser import JDParser
+
+        requirements = JDRequirements(
             title=title or extracted.title,
             department=extracted.department,
             location=extracted.location,
@@ -144,7 +152,19 @@ class RealAIProvider(AIProvider):
             certifications=extracted.certifications,
             industries=extracted.industries,
             other_requirements=extracted.other_requirements,
+            summary_bullets=[
+                bullet.strip()
+                for bullet in extracted.summary_bullets
+                if bullet and bullet.strip()
+            ][:10],
         )
+        if len(requirements.summary_bullets) < 5:
+            requirements = requirements.model_copy(
+                update={
+                    "summary_bullets": JDParser().summarize(text, requirements)
+                }
+            )
+        return requirements
 
     def parse_resume(self, text: str) -> ParsedResume:
         truncated = text[:12000]
@@ -191,9 +211,10 @@ class RealAIProvider(AIProvider):
             f"{PROTECTED_CHARACTERISTICS_RULE}"
         )
         user = (
-            "Given this resume and JD evidence, return JSON with "
-            "why_candidate_fits and evidence_points. "
-            "Reference only provided facts. Do not change or invent scores.\n\n"
+            "Given this resume and JD evidence, return JSON with fit_points and "
+            "gap_points as concise evidence-based bullet strings. "
+            "Only include gaps supported by missing JD requirements. "
+            "Do not invent skills or experience. Do not change scores.\n\n"
             f"Job title: {requirements.title}\n"
             f"Required skills: {requirements.required_skills}\n"
             f"Preferred skills: {requirements.preferred_skills}\n"
@@ -202,6 +223,8 @@ class RealAIProvider(AIProvider):
             f"Certifications: {requirements.certifications}\n"
             f"Matched skills: {scored.matched_skills}\n"
             f"Missing skills: {scored.missing_skills}\n"
+            f"Transparent fit points: {scored.fit_points}\n"
+            f"Transparent gap points: {scored.gap_points}\n"
             f"Required skill score: {scored.required_skill_score}\n"
             f"Preferred skill score: {scored.preferred_skill_score}\n"
             f"Experience score: {scored.categories['experience'].score}\n"
@@ -221,16 +244,38 @@ class RealAIProvider(AIProvider):
                 user_prompt=user,
                 schema=LLMFitExplanation,
             )
-            evidence_suffix = ""
-            if narrative.evidence_points:
-                evidence_suffix = " Evidence: " + "; ".join(narrative.evidence_points[:5])
+            fit_points = [
+                point.strip()
+                for point in (narrative.fit_points or scored.fit_points)
+                if point and point.strip()
+            ][:8] or scored.fit_points
+            gap_points = [
+                point.strip()
+                for point in (narrative.gap_points or [])
+                if point and point.strip()
+            ][:8]
+            if not gap_points:
+                gap_points = scored.gap_points
+            explanation_parts = []
+            if fit_points:
+                explanation_parts.append("Fits: " + "; ".join(fit_points))
+            if gap_points:
+                explanation_parts.append("Does not fit / gaps: " + "; ".join(gap_points))
             explanation = (
-                f"{narrative.why_candidate_fits.strip()} "
-                f"(Transparent overall score {scored.overall_score}/100 "
-                f"from configured category weights; protected traits excluded.)"
-                f"{evidence_suffix}"
+                " | ".join(explanation_parts)
+                if explanation_parts
+                else scored.explanation
+            ) + (
+                f" (Transparent overall score {scored.overall_score}/100 "
+                "from configured category weights; protected traits excluded.)"
             )
-            return scored.model_copy(update={"explanation": explanation})
+            return scored.model_copy(
+                update={
+                    "explanation": explanation,
+                    "fit_points": fit_points,
+                    "gap_points": gap_points,
+                }
+            )
         except AIProviderError:
             # Preserve transparent scores; surface explanation failure as error.
             raise

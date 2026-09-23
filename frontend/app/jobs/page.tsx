@@ -16,10 +16,11 @@ import {
   createJob,
   deleteJob,
   getJobs,
+  getScoringCriteria,
   publishJob,
   updateJob,
 } from "@/lib/api";
-import type { Job } from "@/lib/types";
+import type { Job, ScoringCriteria } from "@/lib/types";
 
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -27,6 +28,8 @@ export default function JobsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<Job | null>(null);
+  const [selected, setSelected] = useState<Job | null>(null);
+  const [criteria, setCriteria] = useState<ScoringCriteria | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [draft, setDraft] = useState({
     title: "",
@@ -56,6 +59,7 @@ export default function JobsPage() {
 
   useEffect(() => {
     void load();
+    getScoringCriteria().then(setCriteria).catch(() => setCriteria(null));
   }, [load]);
 
   const openEdit = (job: Job) => {
@@ -158,7 +162,7 @@ export default function JobsPage() {
             <div className="divide-y">
               {jobs.map((job) => (
                 <div key={job.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
+                  <button className="text-left" onClick={() => setSelected(job)}>
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-semibold text-[#101828]">{job.title}</p>
                       <Badge tone={job.status === "published" ? "green" : job.status === "archived" ? "gray" : "amber"}>{job.status ?? "draft"}</Badge>
@@ -167,7 +171,7 @@ export default function JobsPage() {
                       {[job.department, job.location, job.employment_type].filter(Boolean).join(" · ") || "Details pending"}
                       {typeof job.application_count === "number" ? ` · ${job.application_count} candidate${job.application_count === 1 ? "" : "s"}` : ""}
                     </p>
-                  </div>
+                  </button>
                   <div className="flex flex-wrap gap-2">
                     <Button variant="secondary" size="sm" onClick={() => openEdit(job)}><Pencil className="size-4" />Edit</Button>
                     {job.status !== "published" && <Button size="sm" onClick={() => void publishJob(job.id).then(load)}>Publish</Button>}
@@ -193,6 +197,46 @@ export default function JobsPage() {
             </div>
           )}
         </section>
+
+        {selected && !editing && (
+          <section className="grid gap-5 lg:grid-cols-2">
+            <div className="rounded-xl border bg-white p-5 shadow-panel">
+              <h2 className="mb-1 font-semibold text-[#101828]">JD Summary</h2>
+              <p className="mb-4 text-sm text-[#667085]">{selected.title}</p>
+              <ul className="space-y-2 text-sm text-[#475467]">
+                {(selected.requirements?.structured_data?.summary_bullets?.length
+                  ? selected.requirements.structured_data.summary_bullets
+                  : ["Open Edit or re-save this JD to generate a 5–10 bullet summary."]
+                ).map((bullet) => (
+                  <li key={bullet} className="flex gap-2"><span className="text-primary">•</span><span>{bullet}</span></li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border bg-white p-5 shadow-panel">
+              <h2 className="mb-1 font-semibold text-[#101828]">AI Screening & Scoring Criteria</h2>
+              <p className="mb-4 text-sm text-[#667085]">{criteria?.note ?? "Transparent weighted comparison between JD and resume."}</p>
+              <div className="space-y-3">
+                {(criteria?.criteria ?? []).map((item) => (
+                  <div key={item.key} className="rounded-lg border bg-[#fafbfc] p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-[#101828]">{item.label}</p>
+                      <Badge tone="purple">{item.weight_percent}%</Badge>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-[#667085]">{item.description}</p>
+                  </div>
+                ))}
+              </div>
+              {!!criteria?.signals?.length && (
+                <div className="mt-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#98a2b3]">Comparison signals</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {criteria.signals.map((signal) => <Badge key={signal} tone="gray">{signal}</Badge>)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {editing && (
           <section className="rounded-xl border bg-white p-5 shadow-panel sm:p-6">

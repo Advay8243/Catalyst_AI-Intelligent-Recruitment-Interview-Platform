@@ -698,6 +698,48 @@ def test_candidate_screening_status_and_score_range_filters(client):
     assert still_pending.json()["total"] == 0
 
 
+def test_jd_summary_bullets_scoring_criteria_and_semantic_search(client):
+    created = create_job(client)
+    structured = created["requirements"]["structured_data"]
+    bullets = structured["summary_bullets"]
+    assert 5 <= len(bullets) <= 10
+    assert any("python" in bullet.lower() or "fastapi" in bullet.lower() for bullet in bullets)
+
+    criteria = client.get("/scoring-criteria")
+    assert criteria.status_code == 200
+    payload = criteria.json()
+    labels = {item["label"] for item in payload["criteria"]}
+    assert "Required Skills" in labels
+    assert "Experience" in labels
+    assert payload["signals"]
+
+    search = client.get("/jobs/search", params={"q": "backend python fastapi postgresql"})
+    assert search.status_code == 200
+    hits = search.json()["items"]
+    assert hits
+    assert hits[0]["job"]["id"] == created["id"]
+    assert 0 < hits[0]["similarity"] <= 1
+
+
+def test_shortlist_threshold_and_generate_scores(client):
+    job = create_job(client)
+    uploaded = upload_candidate(client, job["id"])
+    listing = client.get(f"/jobs/{job['id']}/candidates")
+    assert listing.status_code == 200
+    assert listing.json()["shortlisted_threshold"] == 60
+    assert listing.json()["total_uploaded"] == 1
+    assert listing.json()["items"][0]["jd_score"] >= 60
+    assert listing.json()["items"][0]["fit_points"]
+
+    generated = client.post(f"/jobs/{job['id']}/generate-scores")
+    assert generated.status_code == 200, generated.text
+    body = generated.json()
+    assert body["analyzed_count"] == 1
+    assert body["shortlisted_count"] == 1
+    assert body["job_id"] == job["id"]
+    assert uploaded["candidate"]["id"]
+
+
 def test_candidate_search_filters_sort_and_comparison(client):
     job = create_job(client)
     second_job = client.post(

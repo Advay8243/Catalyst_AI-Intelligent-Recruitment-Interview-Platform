@@ -11,11 +11,14 @@ import type {
   EmailDraft,
   EmailHistoryItem,
   EmailType,
+  GenerateScoresResult,
   Job,
   JobParsePreview,
   JobRequirements,
+  JobSearchHit,
   JobStatus,
   PaginatedCandidates,
+  ScoringCriteria,
   ScreeningAnalysis,
   TranscriptEntry,
 } from "@/lib/types";
@@ -62,6 +65,16 @@ function normalizeCandidate(raw: Record<string, unknown>): Candidate {
     jdScore: raw.jdScore != null ? Number(raw.jdScore) : raw.jd_score != null ? Number(raw.jd_score) : null,
     hrScore: raw.hrScore != null ? Number(raw.hrScore) : raw.hr_score != null ? Number(raw.hr_score) : null,
     fitReason: String(raw.fitReason ?? raw.fit_reason ?? raw.why_candidate_fits ?? "Analysis pending"),
+    fitPoints: Array.isArray(raw.fitPoints)
+      ? raw.fitPoints.map(String)
+      : Array.isArray(raw.fit_points)
+        ? raw.fit_points.map(String)
+        : [],
+    gapPoints: Array.isArray(raw.gapPoints)
+      ? raw.gapPoints.map(String)
+      : Array.isArray(raw.gap_points)
+        ? raw.gap_points.map(String)
+        : [],
     status: raw.status ? String(raw.status) : raw.application_status ? String(raw.application_status) : undefined,
     callStatus: raw.callStatus ? String(raw.callStatus) : raw.call_status ? String(raw.call_status) : undefined,
     jobId: raw.jobId ? String(raw.jobId) : raw.job_id ? String(raw.job_id) : undefined,
@@ -131,6 +144,16 @@ export async function getCandidates(query: CandidateQuery): Promise<PaginatedCan
     total: Number(raw.total ?? raw.count ?? list.length),
     page: Number(raw.page ?? query.page),
     pageSize: Number(raw.pageSize ?? raw.page_size ?? query.pageSize),
+    totalUploaded: raw.totalUploaded != null
+      ? Number(raw.totalUploaded)
+      : raw.total_uploaded != null
+        ? Number(raw.total_uploaded)
+        : undefined,
+    shortlistedThreshold: raw.shortlistedThreshold != null
+      ? Number(raw.shortlistedThreshold)
+      : raw.shortlisted_threshold != null
+        ? Number(raw.shortlisted_threshold)
+        : 60,
   };
 }
 
@@ -233,6 +256,28 @@ export async function getCandidate(id: string): Promise<Candidate> {
 export async function getJobs(): Promise<Job[]> {
   const raw = await request<Job[] | { items?: Job[]; jobs?: Job[] }>("/jobs");
   return Array.isArray(raw) ? raw : raw.items ?? raw.jobs ?? [];
+}
+
+export async function searchJobs(query: string, limit = 20): Promise<JobSearchHit[]> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const raw = await request<{ items?: Array<{ job: Job; similarity: number }> }>(
+    `/jobs/search?${params}`,
+  );
+  return (raw.items ?? []).map((item) => ({
+    job: item.job,
+    similarity: Number(item.similarity ?? 0),
+  }));
+}
+
+export async function getScoringCriteria(): Promise<ScoringCriteria> {
+  return request<ScoringCriteria>("/scoring-criteria");
+}
+
+export async function generateJobScores(jobId: string): Promise<GenerateScoresResult> {
+  return request<GenerateScoresResult>(
+    `/jobs/${encodeURIComponent(jobId)}/generate-scores`,
+    { method: "POST" },
+  );
 }
 
 function parseErrorDetail(payload: unknown, fallback: string): string {

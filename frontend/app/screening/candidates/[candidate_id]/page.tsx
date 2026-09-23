@@ -298,9 +298,15 @@ export default function CandidateReviewPage() {
           )}
 
           {tab === "overview" && (
-          <Card title="Job description" icon={<BriefcaseBusiness />}>
-            <p className="text-sm leading-6 text-[#475467]">{review.job.description}</p>
-            <RequirementList title="Responsibilities" items={review.job.responsibilities} />
+          <Card title="JD Summary" icon={<BriefcaseBusiness />}>
+            <ul className="space-y-2 text-sm text-[#475467]">
+              {(review.job.summary_bullets?.length
+                ? review.job.summary_bullets
+                : review.job.responsibilities.slice(0, 8)
+              ).map((bullet) => (
+                <li key={bullet} className="flex gap-2"><span className="text-primary">•</span><span>{bullet}</span></li>
+              ))}
+            </ul>
             <div className="mt-5 grid gap-5 md:grid-cols-2">
               <RequirementList title="Required skills" items={review.job.required_skills} badges />
               <RequirementList title="Preferred skills" items={review.job.preferred_skills} badges />
@@ -348,7 +354,7 @@ export default function CandidateReviewPage() {
               </div>
             ) : (
               <div className="grid gap-5 md:grid-cols-[180px_1fr]">
-                <ScoreCircle score={review.resume_analysis.overall_score} label="JD → Resume" />
+                <ScoreCircle score={review.resume_analysis.overall_score} label="AI Calculated" />
                 <div>
                   <RequirementList title="Extracted skills" items={review.resume.parsed_data.skills ?? []} badges />
                   <p className="mt-4 text-sm text-[#475467]"><strong>Experience:</strong> {review.resume.parsed_data.years_experience ?? "Not extracted"} years</p>
@@ -373,7 +379,31 @@ export default function CandidateReviewPage() {
                   <EvidenceList title="Matched skills" items={(review.resume_analysis.evidence?.matched_skills as string[] | undefined) ?? []} tone="green" />
                   <EvidenceList title="Missing skills" items={(review.resume_analysis.evidence?.missing_skills as string[] | undefined) ?? []} tone="amber" />
                 </div>
-                <div className="mt-5 rounded-xl bg-[#f8f9fb] p-4 text-sm leading-6 text-[#475467]">{review.resume_analysis.explanation}</div>
+                <div className="mt-5 rounded-xl bg-[#f8f9fb] p-4 text-sm text-[#475467]">
+                  <p className="mb-3 font-semibold text-[#101828]">AI Suggestion — Why Fits / Not Fits</p>
+                  {(review.resume_analysis.fit_points?.length || review.resume_analysis.gap_points?.length) ? (
+                    <div className="space-y-3">
+                      {!!review.resume_analysis.fit_points?.length && (
+                        <div>
+                          <p className="mb-1 font-semibold text-green-800">Fits</p>
+                          <ul className="list-disc space-y-1 pl-5">
+                            {review.resume_analysis.fit_points.map((point) => <li key={point}>{point}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      {!!review.resume_analysis.gap_points?.length && (
+                        <div>
+                          <p className="mb-1 font-semibold text-amber-800">Does Not Fit / Gaps</p>
+                          <ul className="list-disc space-y-1 pl-5">
+                            {review.resume_analysis.gap_points.map((point) => <li key={point}>{point}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="leading-6">{review.resume_analysis.explanation}</p>
+                  )}
+                </div>
               </>
             )}
           </Card>

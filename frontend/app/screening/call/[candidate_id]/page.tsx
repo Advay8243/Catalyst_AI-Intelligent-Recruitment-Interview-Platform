@@ -157,7 +157,7 @@ export default function HRScreeningCallPage() {
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <div className="rounded-lg border px-3 py-2 text-sm">
-                <span className="text-[#667085]">JD → Resume Score </span>
+                <span className="text-[#667085]">AI Calculated Score </span>
                 <strong>{candidate.jd_resume_score}%</strong>
               </div>
               <Badge tone={session.status === "completed" ? "green" : active ? "purple" : "amber"}>
@@ -185,7 +185,7 @@ export default function HRScreeningCallPage() {
               <Info icon={<BriefcaseBusiness />} label="Applied Position" value={candidate.job_title} />
               <Info icon={<Mail />} label="Email" value={candidate.email} />
               <Info icon={<Phone />} label="Phone" value={candidate.phone ?? "Not provided"} />
-              <Info icon={<Sparkles />} label="JD → Resume Score" value={`${candidate.jd_resume_score}%`} />
+              <Info icon={<Sparkles />} label="AI Calculated Score" value={`${candidate.jd_resume_score}%`} />
             </dl>
             <div className="mt-5 border-t pt-4">
               <p className="text-xs font-bold uppercase tracking-wide text-[#98a2b3]">Key matched skills</p>
