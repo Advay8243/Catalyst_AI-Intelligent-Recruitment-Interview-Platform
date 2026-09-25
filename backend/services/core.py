@@ -270,7 +270,7 @@ class JobService:
             .where(Application.job_id == job_id)
         ) or 0
         if application_count:
-            job.status = "archived"
+            job.status = "draft"
             self.db.commit()
             return
         self.db.delete(job)
@@ -789,7 +789,55 @@ class CandidateService:
             shortlisted_threshold=SHORTLIST_MIN_SCORE,
         )
 
-    def generate_scores(self, job_id: uuid.UUID) -> GenerateScoresResult:
+    def top_candidates(
+        self, job_id: uuid.UUID, limit: int = 10
+    ) -> list[dict[str, object]]:
+        job = self.jobs.get(job_id)
+        if not job:
+            raise NotFoundError("Job not found")
+        if not job.requirements:
+            return []
+        requirements = JDRequirements.model_validate(job.requirements.structured_data)
+        rows = self.db.execute(
+            select(Application, Candidate, Resume, ResumeAnalysis)
+            .join(Candidate, Candidate.id == Application.candidate_id)
+            .join(Resume, Resume.id == Application.resume_id)
+            .outerjoin(
+                ResumeAnalysis,
+                (ResumeAnalysis.resume_id == Resume.id)
+                & (ResumeAnalysis.job_id == Application.job_id),
+            )
+            .where(Application.job_id == job_id)
+        ).all()
+        ranked: list[tuple[int, Candidate, int | None]] = []
+        for _application, candidate, resume, analysis in rows:
+            preview_score: int | None = analysis.overall_score if analysis else None
+            if preview_score is None:
+                parsed = ParsedResume.model_validate(resume.parsed_data)
+                preview_score = self.ai.match_resume(
+                    parsed, requirements, self.settings.scoring_weights
+                ).overall_score
+            years = int((candidate.profile or {}).get("years_experience") or 0)
+            ranked.append((preview_score, candidate, years))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        items: list[dict[str, object]] = []
+        for score, candidate, years in ranked[:limit]:
+            items.append(
+                {
+                    "candidate_id": candidate.id,
+                    "full_name": candidate.full_name,
+                    "email": candidate.email,
+                    "experience_years": years or None,
+                    "preview_score": score,
+                }
+            )
+        return items
+
+    def generate_scores(
+        self,
+        job_id: uuid.UUID,
+        candidate_ids: list[uuid.UUID] | None = None,
+    ) -> GenerateScoresResult:
         job = self.jobs.get(job_id)
         if not job:
             raise NotFoundError("Job not found")
@@ -801,6 +849,17 @@ class CandidateService:
                 .options()
             )
         )
+        if candidate_ids is not None:
+            allowed = set(candidate_ids)
+            applications = [
+                application
+                for application in applications
+                if application.candidate_id in allowed
+            ]
+            if not applications:
+                raise ValueError("No matching candidates found for this job.")
+            if len(applications) > 10:
+                raise ValueError("Select at most ten candidates to generate scores.")
         analyzed = 0
         shortlisted = 0
         below = 0

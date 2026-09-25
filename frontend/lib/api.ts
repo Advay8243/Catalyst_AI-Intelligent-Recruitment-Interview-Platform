@@ -12,6 +12,7 @@ import type {
   EmailHistoryItem,
   EmailType,
   GenerateScoresResult,
+  TopCandidatePreview,
   Job,
   JobParsePreview,
   JobRequirements,
@@ -286,11 +287,29 @@ export async function getScoringCriteria(): Promise<ScoringCriteria> {
   return request<ScoringCriteria>("/scoring-criteria");
 }
 
-export async function generateJobScores(jobId: string): Promise<GenerateScoresResult> {
+export async function getTopCandidates(jobId: string, limit = 10): Promise<TopCandidatePreview[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const raw = await request<{ items?: TopCandidatePreview[] }>(
+    `/jobs/${encodeURIComponent(jobId)}/candidates/top?${params}`,
+  );
+  return raw.items ?? [];
+}
+
+export async function generateJobScores(
+  jobId: string,
+  candidateIds: string[],
+): Promise<GenerateScoresResult> {
   return request<GenerateScoresResult>(
     `/jobs/${encodeURIComponent(jobId)}/generate-scores`,
-    { method: "POST" },
+    {
+      method: "POST",
+      body: JSON.stringify({ candidate_ids: candidateIds }),
+    },
   );
+}
+
+export async function draftJob(jobId: string): Promise<Job> {
+  return updateJob(jobId, { status: "draft" });
 }
 
 function parseErrorDetail(payload: unknown, fallback: string): string {

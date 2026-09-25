@@ -26,10 +26,18 @@ import {
   getCandidates,
   getJob,
   getJobs,
+  getTopCandidates,
   recordDecision,
   searchJobs,
 } from "@/lib/api";
-import type { Candidate, CandidateQuery, Decision, Job, JobSearchHit } from "@/lib/types";
+import type {
+  Candidate,
+  CandidateQuery,
+  Decision,
+  Job,
+  JobSearchHit,
+  TopCandidatePreview,
+} from "@/lib/types";
 import { formatEmailStatus, formatShortDate, friendlyErrorMessage, initials } from "@/lib/utils";
 
 const PAGE_SIZE = 10;
@@ -74,6 +82,10 @@ export function ScreeningClient() {
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState(0);
   const [updatingDecisionId, setUpdatingDecisionId] = useState<string | null>(null);
+  const [topCandidates, setTopCandidates] = useState<TopCandidatePreview[]>([]);
+  const [selectedForScoring, setSelectedForScoring] = useState<string[]>([]);
+  const [pickingJob, setPickingJob] = useState(!initialJobId);
+  const [loadingTop, setLoadingTop] = useState(false);
 
   useEffect(() => {
     getJobs()
@@ -103,7 +115,7 @@ export function ScreeningClient() {
   }, [initialJobId]);
 
   useEffect(() => {
-    if (!jdQuery.trim()) {
+    if (!jdQuery.trim() || (selectedJob && !pickingJob)) {
       setJdHits([]);
       return;
     }
@@ -115,7 +127,28 @@ export function ScreeningClient() {
         .finally(() => setSearchingJobs(false));
     }, 300);
     return () => clearTimeout(timer);
-  }, [jdQuery]);
+  }, [jdQuery, selectedJob, pickingJob]);
+
+  const loadTopCandidates = useCallback(async () => {
+    if (!jobId) return;
+    setLoadingTop(true);
+    try {
+      const items = await getTopCandidates(jobId);
+      setTopCandidates(items);
+      setSelectedForScoring([]);
+    } catch {
+      setTopCandidates([]);
+      setSelectedForScoring([]);
+    } finally {
+      setLoadingTop(false);
+    }
+  }, [jobId]);
+
+  useEffect(() => {
+    if (jobId && selectedJob && !scoresReady) {
+      void loadTopCandidates();
+    }
+  }, [jobId, selectedJob, scoresReady, loadTopCandidates]);
 
   const query = useMemo<CandidateQuery>(() => {
     const resumeRange = scoreRange(resumeScoreFilter);
@@ -188,11 +221,26 @@ export function ScreeningClient() {
     setJobId(job.id);
     setJdQuery(job.title);
     setJdHits([]);
-    setScoresReady(true);
+    setPickingJob(false);
+    setScoresReady(false);
     setCandidates([]);
     setTotal(0);
     setPage(1);
     router.replace(`/screening?job_id=${encodeURIComponent(job.id)}`);
+  };
+
+  const changeJob = () => {
+    setPickingJob(true);
+    setJdHits([]);
+    setJdQuery("");
+  };
+
+  const toggleScoringCandidate = (candidateId: string) => {
+    setSelectedForScoring((current) => (
+      current.includes(candidateId)
+        ? current.filter((id) => id !== candidateId)
+        : [...current, candidateId]
+    ));
   };
 
   const runGenerateScores = async () => {
@@ -200,11 +248,18 @@ export function ScreeningClient() {
       showNotice("Select a JD first.", true);
       return;
     }
+    if (!selectedForScoring.length) {
+      showNotice("Select at least one candidate to generate AI scores.", true);
+      return;
+    }
     setAnalyzing(true);
     setError("");
     const wait = new Promise((resolve) => setTimeout(resolve, ANALYZE_MS));
     try {
-      const [, result] = await Promise.all([wait, generateJobScores(jobId)]);
+      const [, result] = await Promise.all([
+        wait,
+        generateJobScores(jobId, selectedForScoring),
+      ]);
       setAnalyzeProgress(100);
       setScoresReady(true);
       setSortBy("jdScore");
@@ -251,7 +306,7 @@ export function ScreeningClient() {
             <p className="mt-1 text-sm text-[#667085]">Select a JD to review every candidate and their saved AI and HR scores.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setUploadKind("jd")}><FileText className="size-4" />Upload / paste JD</Button>
+            <Button variant="secondary" onClick={() => setUploadKind("jd")}><FileText className="size-4" />Upload JD</Button>
             <Button onClick={() => setUploadKind("resume")} disabled={!jobId}><Upload className="size-4" />Upload resumes</Button>
           </div>
         </div>
@@ -263,18 +318,28 @@ export function ScreeningClient() {
             {/* <span className="rounded-full bg-[#fff0f7] px-2 py-0.5 text-primary">Step 1</span> */}
             Select JD with semantic search
           </div>
-          <label className="relative block">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#98a2b3]" />
-            <Input
-              value={jdQuery}
-              onChange={(event) => setJdQuery(event.target.value)}
-              placeholder='e.g. "Senior Data Engineer with Spark and AWS"'
-              aria-label="Semantic search jobs"
-              className="pl-9 pr-9"
-            />
-            {jdQuery && <button aria-label="Clear JD search" onClick={() => { setJdQuery(""); setJdHits([]); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#98a2b3]"><X className="size-4" /></button>}
-          </label>
-          {(searchingJobs || jdHits.length > 0) && (
+          {selectedJob && !pickingJob ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-[#fafbfc] px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-[#101828]">{selectedJob.title}</p>
+                <p className="text-xs text-[#667085]">Active job description</p>
+              </div>
+              <Button variant="secondary" size="sm" onClick={changeJob}>Change JD</Button>
+            </div>
+          ) : (
+            <label className="relative block">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#98a2b3]" />
+              <Input
+                value={jdQuery}
+                onChange={(event) => setJdQuery(event.target.value)}
+                placeholder='e.g. "Senior Data Engineer with Spark and AWS"'
+                aria-label="Semantic search jobs"
+                className="pl-9 pr-9"
+              />
+              {jdQuery && <button aria-label="Clear JD search" onClick={() => { setJdQuery(""); setJdHits([]); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#98a2b3]"><X className="size-4" /></button>}
+            </label>
+          )}
+          {(!selectedJob || pickingJob) && (searchingJobs || jdHits.length > 0) && (
             <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border bg-[#fafbfc]">
               {searchingJobs && <p className="px-3 py-2 text-sm text-[#667085]">Searching related JDs…</p>}
               {!searchingJobs && jdHits.map((hit) => (
@@ -292,7 +357,7 @@ export function ScreeningClient() {
               ))}
             </div>
           )}
-          {!selectedJob && jobs.length > 0 && (
+          {(!selectedJob || pickingJob) && !selectedJob && jobs.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {jobs.slice(0, 6).map((job) => (
                 <button key={job.id} onClick={() => selectJob(job)} className="rounded-full border px-3 py-1 text-xs font-medium text-[#475467] hover:border-primary hover:text-primary">
@@ -303,20 +368,59 @@ export function ScreeningClient() {
           )}
           {selectedJob && (
             <div className="mt-4 rounded-xl border bg-[#fafbfc] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-[#101828]">{selectedJob.title}</p>
-                  <p className="text-xs text-[#667085]">JD Summary</p>
-                </div>
-                <Button size="sm" onClick={() => void runGenerateScores()} disabled={analyzing}>
-                  <Sparkles className="size-4" />{analyzing ? "Analyzing…" : "Generate AI Scores"}
-                </Button>
-              </div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-[#667085]">JD Summary</p>
               <ul className="mt-3 grid gap-1.5 text-sm text-[#475467] sm:grid-cols-2">
                 {(summaryBullets.length ? summaryBullets : ["Summary will appear after the JD is parsed."]).map((bullet) => (
                   <li key={bullet} className="flex gap-2"><span className="text-primary">•</span><span>{bullet}</span></li>
                 ))}
               </ul>
+            </div>
+          )}
+          {selectedJob && !scoresReady && (
+            <div className="mt-4 rounded-xl border bg-white p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-[#101828]">Top candidates for this JD</h3>
+                  <p className="text-xs text-[#667085]">Select up to 10 resumes, then generate AI Calculated Scores.</p>
+                </div>
+                <Button
+                  onClick={() => void runGenerateScores()}
+                  disabled={analyzing || selectedForScoring.length === 0}
+                >
+                  <Sparkles className="size-4" />
+                  {analyzing
+                    ? "Analyzing…"
+                    : `Generate AI Scores (${selectedForScoring.length} Selected)`}
+                </Button>
+              </div>
+              {loadingTop ? (
+                <p className="text-sm text-[#667085]">Loading ranked candidates…</p>
+              ) : topCandidates.length === 0 ? (
+                <p className="text-sm text-[#667085]">Upload resumes for this JD to see ranked candidates here.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {topCandidates.map((item) => (
+                    <li key={item.candidate_id}>
+                      <label className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 hover:bg-[#fafbfc]">
+                        <input
+                          type="checkbox"
+                          className="size-4 rounded border-[#d0d5dd]"
+                          checked={selectedForScoring.includes(item.candidate_id)}
+                          onChange={() => toggleScoringCandidate(item.candidate_id)}
+                          aria-label={`Select ${item.full_name}`}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-[#101828]">{item.full_name}</span>
+                          <span className="block text-xs text-[#667085]">{item.email}</span>
+                        </span>
+                        {item.preview_score != null && (
+                          <Badge tone="purple">{item.preview_score}% match</Badge>
+                        )}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </section>
@@ -510,13 +614,6 @@ export function ScreeningClient() {
           </>
         )}
 
-        {selectedJob && !scoresReady && !analyzing && (
-          <EmptyState
-            icon={<Sparkles className="size-6" />}
-            title="Generate AI Calculated Scores"
-            description="Resumes stay stored. Use Generate AI Scores above to thoroughly analyze them against this JD and list every candidate with an AI Calculated Score."
-          />
-        )}
       </div>
 
       <ScoreDrawer candidate={selected} type="jd" open={drawer === "jd"} onOpenChange={(open) => !open && setDrawer(null)} />

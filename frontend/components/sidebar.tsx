@@ -20,9 +20,9 @@ import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 const navigation = [
-  { name: "Overview", icon: LayoutDashboard, href: "/overview" },
+  { name: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
   { name: "Candidate Screening", icon: FileSearch, href: "/screening" },
-  { name: "Candidates", icon: Users, href: "/screening", pending: false },
+  { name: "Candidates", icon: Users, href: "/candidates" },
   { name: "Jobs", icon: BriefcaseBusiness, href: "/jobs" },
   { name: "Online Assessment", icon: ClipboardCheck, href: "#", pending: true },
   { name: "Analytics", icon: BarChart3, href: "#", pending: true },

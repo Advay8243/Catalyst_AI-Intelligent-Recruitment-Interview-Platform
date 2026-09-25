@@ -51,8 +51,7 @@ export function UploadDialog({
   onNotice: (message: string, error?: boolean) => void;
 }) {
   const [files, setFiles] = useState<File[]>([]);
-  const [jdText, setJdText] = useState("");
-  const [mode, setMode] = useState<"file" | "paste" | "form">("file");
+  const [mode, setMode] = useState<"file" | "form">("file");
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -90,11 +89,7 @@ export function UploadDialog({
   };
 
   const parseJd = async () => {
-    if (mode === "paste" && jdText.trim().length < 20) {
-      onNotice("Paste a complete job description (at least 20 characters).", true);
-      return;
-    }
-    if (mode === "file" && (!files.length || !isSupportedDocument(files[0]))) {
+    if (!files.length || !isSupportedDocument(files[0])) {
       onNotice("Upload a valid PDF or DOCX job description.", true);
       return;
     }
@@ -102,9 +97,7 @@ export function UploadDialog({
     setProgress(20);
     setStage("Parsing job description");
     try {
-      const preview = mode === "file"
-        ? await parseJobDescription({ file: files[0] })
-        : await parseJobDescription({ description: jdText.trim() });
+      const preview = await parseJobDescription({ file: files[0] });
       setProgress(100);
       applyExtracted(preview.editable, preview.description);
       onNotice("Review extracted JD fields before saving.");
@@ -201,7 +194,7 @@ export function UploadDialog({
         description={
           kind === "resume"
             ? "Upload one or more PDF/DOCX resumes for the selected job. Failed files do not block the rest."
-            : "Upload or paste a JD, review extracted fields, then save as draft or publish."
+            : "Upload a JD file, review extracted fields, then save as draft or publish."
         }
         className="max-w-2xl"
       >
@@ -209,12 +202,6 @@ export function UploadDialog({
           <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Select a job first, or upload a job description before adding resumes.
           </p>
-        )}
-        {kind === "jd" && mode !== "form" && (
-          <div className="mt-5 grid grid-cols-2 rounded-lg bg-muted p-1">
-            <button className={`rounded-md py-2 text-sm font-medium ${mode === "file" ? "bg-white shadow-sm" : "text-[#667085]"}`} onClick={() => setMode("file")}>Upload file</button>
-            <button className={`rounded-md py-2 text-sm font-medium ${mode === "paste" ? "bg-white shadow-sm" : "text-[#667085]"}`} onClick={() => setMode("paste")}>Paste text</button>
-          </div>
         )}
         <div className="mt-5 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
           {kind === "jd" && mode === "form" ? (
@@ -248,8 +235,6 @@ export function UploadDialog({
                 </label>
               ))}
             </div>
-          ) : mode === "paste" && kind === "jd" ? (
-            <textarea value={jdText} onChange={(event) => setJdText(event.target.value)} rows={12} placeholder="Paste the full job description here…" aria-label="Job description text" className="w-full resize-none rounded-xl border p-4 text-sm leading-6 shadow-sm focus:border-primary" />
           ) : (
             <>
               <Input ref={inputRef} type="file" multiple={kind === "resume"} accept={ACCEPTED_TYPES} className="hidden" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} aria-label={kind === "resume" ? "Resume files" : "Job description file"} />
@@ -288,7 +273,7 @@ export function UploadDialog({
               <Button disabled={uploading} onClick={() => void saveJob("published")}>Publish JD</Button>
             </>
           ) : kind === "jd" ? (
-            <Button disabled={uploading || (mode === "file" ? !files.length : !jdText.trim())} onClick={() => void parseJd()}>
+            <Button disabled={uploading || !files.length} onClick={() => void parseJd()}>
               {uploading ? <LoaderCircle className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
               Parse & review
             </Button>

@@ -70,7 +70,7 @@ export default function OverviewPage() {
         <div className="mx-auto flex max-w-[1500px] flex-col gap-4 pl-12 sm:pl-0 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs font-medium text-[#98a2b3]">
-              <span>Recruitment</span><span>/</span><span className="text-[#667085]">Overview</span>
+              <span>Recruitment</span><span>/</span><span className="text-[#667085]">Dashboard</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-[#101828]">Recruiter Dashboard</h1>
             <p className="mt-1 text-sm text-[#667085]">Live pipeline metrics from jobs, screening, decisions, and email activity.</p>
