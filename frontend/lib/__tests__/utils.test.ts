@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatAiRecommendation,
   formatEmailStatus,
+  formatShortDate,
   scoreBandLabel,
   scoreTone,
 } from "@/lib/utils";
@@ -40,5 +41,12 @@ describe("formatEmailStatus", () => {
     expect(formatEmailStatus("Draft")).toBe("✉ Draft");
     expect(formatEmailStatus("Sent")).toBe("✉ Sent");
     expect(formatEmailStatus("Failed")).toBe("✉ Failed");
+  });
+});
+
+describe("formatShortDate", () => {
+  it("formats persisted timestamps without exposing raw database values", () => {
+    expect(formatShortDate("2026-09-24T13:57:23.293Z")).toBe("24 Sep 2026");
+    expect(formatShortDate(undefined)).toBe("");
   });
 });

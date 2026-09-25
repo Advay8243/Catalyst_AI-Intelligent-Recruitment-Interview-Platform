@@ -3,14 +3,19 @@
 import { BriefcaseBusiness, Download, ExternalLink, Mail, MapPin, Phone, UserRound } from "lucide-react";
 import type { Candidate } from "@/lib/types";
 import { Badge, Button, Dialog, DialogContent, Progress } from "@/components/ui";
-import { initials, scoreBandLabel, scoreTextClass, scoreTone } from "@/lib/utils";
+import { initials, scoreTextClass } from "@/lib/utils";
 
 export function ScorePill({ score }: { score: number | null }) {
   if (score == null) return <span className="text-sm text-[#98a2b3]">Pending</span>;
+  const color =
+    score >= 80
+      ? "bg-[#16a34a] text-white ring-2 ring-green-200"
+      : score >= 60
+        ? "bg-[#eab308] text-[#422006] ring-2 ring-yellow-200"
+        : "bg-[#dc2626] text-white ring-2 ring-red-200";
   return (
-    <span className="inline-flex flex-col items-center gap-0.5">
-      <Badge tone={scoreTone(score)} className="min-w-12 justify-center py-1">{Math.round(score)}%</Badge>
-      <span className="text-[10px] font-medium text-[#98a2b3]">{scoreBandLabel(score)}</span>
+    <span className={`inline-flex min-w-14 justify-center rounded-full px-2.5 py-1 text-sm font-bold shadow-sm ${color}`}>
+      {Math.round(score)}%
     </span>
   );
 }
@@ -110,7 +115,6 @@ export function ScoreDrawer({
           </span>
           {score != null && <span className="mb-1 text-lg text-[#98a2b3]">/ 100</span>}
         </div>
-        {score != null && <p className="mt-1 text-xs font-medium text-[#667085]">Band {scoreBandLabel(score)}</p>}
       </div>
       <div className="space-y-6 p-6">
         {type === "hr" ? (

@@ -59,6 +59,21 @@ export function formatEmailStatus(status?: string | null) {
   return `✉ ${value}`;
 }
 
+export function formatShortDate(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).formatToParts(date);
+  const part = (type: "day" | "month" | "year") =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("day")} ${part("month")} ${part("year")}`.trim();
+}
+
 export function friendlyErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const lower = message.toLowerCase();

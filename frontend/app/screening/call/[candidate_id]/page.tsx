@@ -40,29 +40,59 @@ const statusLabel: Record<string, string> = {
   failed: "Failed",
 };
 
+const ANALYSIS_DURATION_MS = 7600;
+const ANALYSIS_STAGES = [
+  "Reading the full transcript",
+  "Checking answer completeness",
+  "Evaluating relevant experience",
+  "Matching skills to the role",
+  "Assessing communication and motivation",
+  "Generating the HR score and recommendation",
+];
+
 export default function HRScreeningCallPage() {
   const { candidate_id: candidateId } = useParams<{ candidate_id: string }>();
   const searchParams = useSearchParams();
+  const jobId = searchParams.get("job_id") ?? undefined;
   const router = useRouter();
   const [session, setSession] = useState<CallSession | null>(null);
   const [analysis, setAnalysis] = useState<ScreeningAnalysis | null>(null);
+  const [transcriptView, setTranscriptView] = useState<"live" | "pasted">("live");
   const [pasteText, setPasteText] = useState("");
   const [showPaste, setShowPaste] = useState(false);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState("");
+  const [analysisProgress, setAnalysisProgress] = useState(0);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    createCallSession(candidateId, searchParams.get("job_id") ?? undefined)
-      .then(setSession)
+    createCallSession(candidateId, jobId)
+      .then((nextSession) => {
+        setSession(nextSession);
+        setTranscriptView(nextSession.transcript_source === "pasted" ? "pasted" : "live");
+      })
       .catch((caught) =>
         setError(caught instanceof Error ? caught.message : "Unable to prepare this call."),
       )
       .finally(() => setLoading(false));
-  }, [candidateId, searchParams]);
+  }, [candidateId, jobId]);
 
   const realtimeAvailable = Boolean(session?.realtime_transcription_available);
   const active = session?.status === "connected" || session?.status === "connecting";
+
+  useEffect(() => {
+    if (action !== "complete") {
+      setAnalysisProgress(0);
+      return;
+    }
+    const started = Date.now();
+    setAnalysisProgress(4);
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - started;
+      setAnalysisProgress(Math.min(96, Math.round((elapsed / ANALYSIS_DURATION_MS) * 100)));
+    }, 120);
+    return () => clearInterval(timer);
+  }, [action]);
 
   // Poll for progressive realtime transcript when the provider streams STT.
   useEffect(() => {
@@ -106,10 +136,15 @@ export default function HRScreeningCallPage() {
     setError("");
     try {
       const pasted = await pasteTranscript(session.id, pasteText.trim());
+      setTranscriptView("pasted");
       setSession(pasted.session);
       setShowPaste(false);
       setAction("complete");
-      const result = await completeCall(session.id);
+      const [result] = await Promise.all([
+        completeCall(session.id),
+        new Promise((resolve) => setTimeout(resolve, ANALYSIS_DURATION_MS)),
+      ]);
+      setAnalysisProgress(100);
       setSession(result.session);
       setAnalysis(result.analysis);
     } catch (caught) {
@@ -124,7 +159,11 @@ export default function HRScreeningCallPage() {
     setAction("complete");
     setError("");
     try {
-      const result = await completeCall(session.id);
+      const [result] = await Promise.all([
+        completeCall(session.id),
+        new Promise((resolve) => setTimeout(resolve, ANALYSIS_DURATION_MS)),
+      ]);
+      setAnalysisProgress(100);
       setSession(result.session);
       setAnalysis(result.analysis);
     } catch (caught) {
@@ -153,10 +192,11 @@ export default function HRScreeningCallPage() {
   if (!session) return null;
   const candidate = session.candidate;
   const backHref = `/screening?job_id=${encodeURIComponent(candidate.job_id)}`;
+  const showingPastedTranscript = transcriptView === "pasted";
 
   return (
-    <div className="min-h-screen bg-[#f7f8fa]">
-      <header className="border-b bg-white px-5 py-5 sm:px-8">
+    <div className="min-h-screen bg-[#f7f8fa] xl:flex xl:h-screen xl:min-h-0 xl:flex-col xl:overflow-hidden">
+      <header className="shrink-0 border-b bg-white px-5 py-5 sm:px-8">
         <div className="mx-auto max-w-[1440px]">
           <button
             onClick={() => router.push(backHref)}
@@ -185,8 +225,8 @@ export default function HRScreeningCallPage() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1440px] gap-5 p-5 sm:p-8 xl:grid-cols-[320px_minmax(0,1fr)_340px]">
-        <aside className="space-y-5">
+      <main className="mx-auto grid w-full max-w-[1440px] gap-5 p-5 sm:p-8 xl:min-h-0 xl:flex-1 xl:grid-cols-[320px_minmax(0,1fr)_340px] xl:overflow-hidden">
+        <aside className="space-y-5 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
           <section className="rounded-xl border bg-white p-5 shadow-panel">
             <div className="flex items-center gap-3">
               <span className="flex size-11 items-center justify-center rounded-full bg-[#fff0f7] text-sm font-bold text-[#b00665]">
@@ -249,16 +289,28 @@ export default function HRScreeningCallPage() {
           </section>
         </aside>
 
-        <section className="flex min-h-[620px] flex-col overflow-hidden rounded-xl border bg-white shadow-panel">
-          <div className="border-b px-5 py-4">
-            <h2 className="flex items-center gap-2 font-semibold">
-              <MessageSquareText className="size-4 text-primary" /> Live Transcript
-            </h2>
+        <section className="flex h-[70vh] min-h-[540px] flex-col overflow-hidden rounded-xl border bg-white shadow-panel xl:h-auto xl:min-h-0">
+          <div className="shrink-0 border-b px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="flex items-center gap-2 font-semibold">
+                <MessageSquareText className="size-4 text-primary" />
+                {showingPastedTranscript ? "Pasted Transcript" : "Live Transcript"}
+              </h2>
+              <Badge tone={showingPastedTranscript ? "amber" : "purple"}>
+                {showingPastedTranscript ? "Pasted" : "Live"}
+              </Badge>
+            </div>
             <p className="mt-1 text-xs text-[#667085]">
               Speakers are identified automatically from the call/transcription system when available.
             </p>
           </div>
-          <div aria-live="polite" className="flex-1 space-y-4 overflow-y-auto p-5">
+          <div
+            aria-label={`${showingPastedTranscript ? "Pasted" : "Live"} transcript discussion`}
+            aria-live="polite"
+            role="region"
+            tabIndex={0}
+            className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5 outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
+          >
             {!realtimeAvailable && session.transcript_source !== "pasted" && !session.transcript.length && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 <div className="flex items-start gap-2">
@@ -286,16 +338,16 @@ export default function HRScreeningCallPage() {
           </div>
 
           {showPaste && session.status !== "completed" && (
-            <div className="border-t bg-[#fcfcfd] p-4">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667085]">
-                Paste Existing Transcript
-              </p>
+            <div className="shrink-0 border-t bg-[#fcfcfd] p-4">
+              <label htmlFor="existing-transcript" className="mb-2 block text-xs font-semibold uppercase tracking-wide text-[#667085]">
+                Existing Transcript
+              </label>
               <textarea
-                rows={8}
+                id="existing-transcript"
                 value={pasteText}
                 onChange={(event) => setPasteText(event.target.value)}
                 placeholder={"HR: Tell me about your Python experience.\nCandidate: I have five years of Python experience…"}
-                className="w-full rounded-lg border p-3 text-sm"
+                className="h-32 w-full resize-none overflow-y-auto rounded-lg border p-3 text-sm sm:h-36"
                 aria-label="Pasted transcript"
               />
               <Button
@@ -314,8 +366,10 @@ export default function HRScreeningCallPage() {
           )}
         </section>
 
-        <aside className="space-y-5">
-          {!analysis ? (
+        <aside className="space-y-5 xl:min-h-0 xl:overflow-y-auto xl:pl-1">
+          {action === "complete" ? (
+            <AnalysisProgress progress={analysisProgress} />
+          ) : !analysis ? (
             <section className="rounded-xl border bg-white p-5 shadow-panel">
               <h2 className="font-semibold">AI-generated questions</h2>
               <p className="mt-1 text-xs leading-5 text-[#667085]">
@@ -380,6 +434,48 @@ function TranscriptBubble({ entry }: { entry: TranscriptEntry }) {
         <p className="text-sm leading-6 text-[#344054]">{entry.text}</p>
       </div>
     </div>
+  );
+}
+
+function AnalysisProgress({ progress }: { progress: number }) {
+  const activeIndex = Math.min(
+    ANALYSIS_STAGES.length - 1,
+    Math.floor((progress / 100) * ANALYSIS_STAGES.length),
+  );
+  return (
+    <section className="rounded-xl border border-[#f9dbec] bg-white p-5 shadow-panel" role="status" aria-live="polite">
+      <div className="flex items-center gap-3">
+        <span className="flex size-10 items-center justify-center rounded-full bg-[#fff0f7]">
+          <Loader2 className="size-5 animate-spin text-primary" />
+        </span>
+        <div>
+          <h2 className="font-semibold">Analyzing HR discussion</h2>
+          <p className="mt-0.5 text-xs text-[#667085]">This takes about 7–8 seconds.</p>
+        </div>
+      </div>
+      <div className="mt-5 h-2 overflow-hidden rounded-full bg-[#f2f4f7]">
+        <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progress}%` }} />
+      </div>
+      <p className="mt-2 text-right text-xs font-semibold text-primary">{progress}%</p>
+      <div className="mt-5 space-y-3">
+        {ANALYSIS_STAGES.map((stage, index) => {
+          const complete = index < activeIndex;
+          const activeStage = index === activeIndex;
+          return (
+            <div key={stage} className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${activeStage ? "bg-[#fff0f7] text-[#811149]" : "text-[#667085]"}`}>
+              {complete ? (
+                <CheckCircle2 className="size-4 shrink-0 text-green-600" />
+              ) : activeStage ? (
+                <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+              ) : (
+                <span className="size-4 shrink-0 rounded-full border-2 border-[#d0d5dd]" />
+              )}
+              <span className={activeStage ? "font-semibold" : ""}>{stage}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

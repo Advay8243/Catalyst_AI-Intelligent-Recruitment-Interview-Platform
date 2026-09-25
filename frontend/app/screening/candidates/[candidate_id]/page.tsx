@@ -33,7 +33,6 @@ import {
   formatAiRecommendation,
   friendlyErrorMessage,
   initials,
-  scoreBandLabel,
   scoreTextClass,
   scoreTone,
 } from "@/lib/utils";
@@ -45,6 +44,9 @@ export default function CandidateReviewPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const jobId = searchParams.get("job_id") ?? undefined;
+  const screeningHref = jobId
+    ? `/screening?job_id=${encodeURIComponent(jobId)}`
+    : "/screening";
   const [review, setReview] = useState<CandidateReview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -194,7 +196,7 @@ export default function CandidateReviewPage() {
     try {
       await removeCandidateApplication(review.job.id, review.candidate.id);
       setNotice("Resume removed. You can re-upload from Candidate Screening.");
-      router.push("/screening");
+      router.push(screeningHref);
     } catch (caught) {
       setError(friendlyErrorMessage(caught, "Unable to remove resume."));
     } finally {
@@ -209,7 +211,7 @@ export default function CandidateReviewPage() {
         <div className="rounded-xl border bg-white p-10 text-center shadow-panel">
           <h1 className="font-semibold">Unable to load candidate</h1>
           <p className="mt-2 text-sm text-[#667085]">{error}</p>
-          <Button className="mt-5" onClick={() => router.push("/screening")}>
+          <Button className="mt-5" onClick={() => router.push(screeningHref)}>
             <ArrowLeft className="size-4" /> Back to Candidates
           </Button>
         </div>
@@ -226,7 +228,7 @@ export default function CandidateReviewPage() {
     <div className="min-h-screen bg-[#f7f8fa]">
       <header className="border-b bg-white px-5 py-5 sm:px-8">
         <div className="mx-auto max-w-7xl">
-          <button onClick={() => router.push("/screening")} className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#667085] hover:text-primary">
+          <button onClick={() => router.push(screeningHref)} className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#667085] hover:text-primary">
             <ArrowLeft className="size-4" /> Back to Candidates
           </button>
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
@@ -629,7 +631,7 @@ function ScoreCircle({ score, label }: { score: number; label: string }) {
       <span className={`flex size-20 shrink-0 items-center justify-center rounded-full border-[7px] text-xl font-bold ${ring} ${scoreTextClass(score)}`}>
         {score}%
       </span>
-      <span className="text-xs font-medium text-[#667085]">{label}<br />Band {scoreBandLabel(score)}</span>
+      <span className="text-xs font-medium text-[#667085]">{label}</span>
     </div>
   );
 }

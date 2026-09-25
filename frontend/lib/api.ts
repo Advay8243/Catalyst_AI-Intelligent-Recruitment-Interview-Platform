@@ -54,6 +54,15 @@ async function hrRequest<T>(path: string, init: RequestInit): Promise<T> {
 }
 
 function normalizeCandidate(raw: Record<string, unknown>): Candidate {
+  const profile = raw.profile && typeof raw.profile === "object"
+    ? raw.profile as Record<string, unknown>
+    : {};
+  const experienceValue =
+    raw.experienceYears
+    ?? raw.experience_years
+    ?? profile.years_experience
+    ?? profile.experience_years;
+  const experienceYears = experienceValue == null ? undefined : Number(experienceValue);
   return {
     id: String(raw.id ?? raw.candidate_id ?? ""),
     name: String(raw.name ?? raw.full_name ?? "Unknown candidate"),
@@ -61,7 +70,7 @@ function normalizeCandidate(raw: Record<string, unknown>): Candidate {
     phone: raw.phone ? String(raw.phone) : undefined,
     location: raw.location ? String(raw.location) : undefined,
     currentTitle: raw.currentTitle ? String(raw.currentTitle) : raw.current_title ? String(raw.current_title) : undefined,
-    experienceYears: Number(raw.experienceYears ?? raw.experience_years) || undefined,
+    experienceYears: Number.isFinite(experienceYears) ? experienceYears : undefined,
     jdScore: raw.jdScore != null ? Number(raw.jdScore) : raw.jd_score != null ? Number(raw.jd_score) : null,
     hrScore: raw.hrScore != null ? Number(raw.hrScore) : raw.hr_score != null ? Number(raw.hr_score) : null,
     fitReason: String(raw.fitReason ?? raw.fit_reason ?? raw.why_candidate_fits ?? "Analysis pending"),

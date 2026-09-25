@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import HRScreeningCallPage from "./page";
@@ -117,7 +117,8 @@ describe("HRScreeningCallPage", () => {
   });
 
   it("shows realtime unavailable and analyzes a pasted transcript", async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<HRScreeningCallPage />);
 
     expect(await screen.findByText("Jordan Rivera")).toBeInTheDocument();
@@ -125,15 +126,23 @@ describe("HRScreeningCallPage", () => {
     expect(screen.getByText("AI-generated questions")).toBeInTheDocument();
     expect(screen.queryByText(/candidate speaking/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/hr speaking/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Live transcript discussion" })).toHaveClass("overflow-y-auto");
 
     await user.click(screen.getByRole("button", { name: /paste existing transcript/i }));
+    expect(screen.getByLabelText("Pasted transcript")).toHaveClass("overflow-y-auto", "resize-none");
     await user.type(
       screen.getByLabelText("Pasted transcript"),
       "HR: Tell me about your Python experience.\nCandidate: I have five years of Python experience.",
     );
     await user.click(screen.getByRole("button", { name: /analyze transcript/i }));
 
+    expect(await screen.findByText("Analyzing HR discussion")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Pasted transcript discussion" })).toHaveClass("overflow-y-auto");
+    expect(screen.getByText("Evaluating relevant experience")).toBeInTheDocument();
+    expect(screen.queryByText("84%")).not.toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(7700));
     expect(await screen.findByText("84%")).toBeInTheDocument();
     expect(screen.getByText("HR Screening Score")).toBeInTheDocument();
+    vi.useRealTimers();
   });
 });
