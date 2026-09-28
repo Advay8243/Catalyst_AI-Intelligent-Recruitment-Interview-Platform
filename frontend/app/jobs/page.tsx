@@ -167,7 +167,7 @@ export default function JobsPage() {
             <p className="mt-1 text-sm text-[#667085]">Manage published and draft job descriptions.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => void createBlankDraft()}><Plus className="size-4" />Draft JD</Button>
+            <Button variant="secondary" onClick={() => void createBlankDraft()}><Plus className="size-4" />New draft</Button>
             <Button onClick={() => setUploadOpen(true)}><Upload className="size-4" />Upload JD</Button>
           </div>
         </div>
