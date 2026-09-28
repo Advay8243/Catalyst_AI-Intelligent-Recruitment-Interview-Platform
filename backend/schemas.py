@@ -234,11 +234,31 @@ class JobSearchResponse(BaseModel):
     items: list[JobSearchHit]
 
 
+class GenerateScoresRequest(BaseModel):
+    candidate_ids: list[uuid.UUID] = Field(default_factory=list, min_length=1, max_length=10)
+
+
 class GenerateScoresResult(BaseModel):
     job_id: uuid.UUID
     analyzed_count: int
     shortlisted_count: int
     skipped_below_threshold: int
+
+
+class TopCandidatePreview(BaseModel):
+    candidate_id: uuid.UUID
+    full_name: str
+    email: EmailStr
+    experience_years: int | None = None
+    preview_score: int | None = Field(
+        default=None,
+        description="Latest saved JD match score when available.",
+    )
+
+
+class TopCandidatesResponse(BaseModel):
+    job_id: uuid.UUID
+    items: list[TopCandidatePreview]
 
 
 class AnalysisRead(BaseModel):

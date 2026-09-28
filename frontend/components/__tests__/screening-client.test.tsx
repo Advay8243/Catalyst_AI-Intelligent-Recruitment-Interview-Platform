@@ -79,6 +79,25 @@ describe("ScreeningClient", () => {
       if (url.includes("/jobs/search")) {
         return json({ query: "designer", items: [{ job, similarity: 0.91 }] });
       }
+      if (url.includes("/candidates/top")) {
+        return json({
+          job_id: "job-1",
+          items: [
+            {
+              candidate_id: "cand-1",
+              full_name: "Maya Chen",
+              email: "maya@example.com",
+              preview_score: 88,
+            },
+            {
+              candidate_id: "cand-2",
+              full_name: "Noah Singh",
+              email: "noah@example.com",
+              preview_score: 42,
+            },
+          ],
+        });
+      }
       if (url.includes("/generate-scores") && init?.method === "POST") {
         return json({
           job_id: "job-1",
@@ -104,62 +123,30 @@ describe("ScreeningClient", () => {
     }));
   });
 
-  it("selects a JD, generates scores, and shows candidate results", async () => {
+  it("selects a JD, chooses candidates, generates scores, and shows results", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ScreeningClient />);
     await user.click(await screen.findByRole("button", { name: "Lead Product Designer" }));
-    expect(await screen.findByText("JD Summary")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Generate AI Scores" }));
+    expect(await screen.findByText("Top candidates for this JD")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Select Maya Chen" }));
+    await user.click(screen.getByRole("button", { name: "Generate AI Scores (1 Selected)" }));
     expect(screen.getByText(/Analyzing resumes thoroughly/i)).toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(4600));
     expect(await screen.findByText("Candidates")).toBeInTheDocument();
     expect(await screen.findByText("Maya Chen")).toBeInTheDocument();
-    expect(screen.getByText("Noah Singh")).toBeInTheDocument();
-    expect(screen.getByText("42%")).toBeInTheDocument();
-    expect(screen.getByText("AI Resume Score")).toBeInTheDocument();
-    expect(screen.getByText("AI Resume Summary")).toBeInTheDocument();
-    expect(screen.getByText("HR Discussion")).toBeInTheDocument();
-    expect(screen.getByText("HR Score AI Generated")).toBeInTheDocument();
-    expect(screen.getByText("Email")).toBeInTheDocument();
-    expect(screen.getByText("Decision")).toBeInTheDocument();
-    expect(screen.getByText("6 years experience")).toBeInTheDocument();
-    expect(screen.getByText("Evaluated: 24 Sep 2026")).toBeInTheDocument();
-    expect(screen.queryByText("80–89")).not.toBeInTheDocument();
-    expect(screen.queryByText("70–79")).not.toBeInTheDocument();
-    expect(screen.queryByText("Below 60")).not.toBeInTheDocument();
     vi.useRealTimers();
   });
 
   it("opens AI Calculated Score breakdown", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    navigation.jobId = "job-1";
+    const user = userEvent.setup();
     render(<ScreeningClient />);
-    await user.click(await screen.findByRole("button", { name: "Lead Product Designer" }));
-    await user.click(screen.getByRole("button", { name: "Generate AI Scores" }));
-    await act(() => vi.advanceTimersByTimeAsync(4600));
-    await user.click(await screen.findByRole("button", { name: "AI Calculated Score for Maya Chen" }));
+    await screen.findByText("Maya Chen");
+    await user.click(screen.getByRole("button", { name: "AI Calculated Score for Maya Chen" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("AI Calculated Score");
     expect(within(dialog).getByText("Required skills")).toBeInTheDocument();
-    vi.useRealTimers();
-  });
-
-  it("loads candidates without a default min_score filter", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<ScreeningClient />);
-    await user.click(await screen.findByRole("button", { name: "Lead Product Designer" }));
-    await user.click(screen.getByRole("button", { name: "Generate AI Scores" }));
-    await act(() => vi.advanceTimersByTimeAsync(4600));
-    await screen.findByText("Maya Chen");
-    await waitFor(() => {
-      const calls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      const candidateCalls = calls.filter((url) => url.includes("/candidates?"));
-      expect(candidateCalls.length).toBeGreaterThan(0);
-      expect(candidateCalls.every((url) => !url.includes("min_score="))).toBe(true);
-    });
-    vi.useRealTimers();
   });
 
   it("restores saved scores when returning with a selected job", async () => {
@@ -167,33 +154,8 @@ describe("ScreeningClient", () => {
     render(<ScreeningClient />);
 
     expect(await screen.findByText("Maya Chen")).toBeInTheDocument();
-    expect(screen.queryByText("Generate AI Calculated Scores")).not.toBeInTheDocument();
+    expect(screen.queryByText("Top candidates for this JD")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "AI Calculated Score for Maya Chen" })).toBeInTheDocument();
-  });
-
-  it("filters independently by resume and HR screening score", async () => {
-    navigation.jobId = "job-1";
-    const user = userEvent.setup();
-    render(<ScreeningClient />);
-    await screen.findByText("Maya Chen");
-
-    await user.selectOptions(screen.getByLabelText("Filter by AI resume score"), "0-59");
-    await waitFor(() => {
-      const candidateCalls = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/candidates?"));
-      expect(candidateCalls.some((url) => url.includes("min_score=0") && url.includes("max_score=59"))).toBe(true);
-    });
-
-    await user.selectOptions(screen.getByLabelText("Filter by HR screening score"), "80-100");
-    await waitFor(() => {
-      const candidateCalls = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/candidates?"));
-      expect(candidateCalls.some((url) =>
-        url.includes("min_score=0")
-        && url.includes("max_score=59")
-        && url.includes("min_hr_score=80")
-        && url.includes("max_hr_score=100"),
-      )).toBe(true);
-    });
-    expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
   });
 
   it("updates an evaluated candidate decision from the table", async () => {

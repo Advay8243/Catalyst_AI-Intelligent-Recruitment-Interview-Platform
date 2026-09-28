@@ -433,3 +433,11 @@ export type GenerateScoresResult = {
   shortlisted_count: number;
   skipped_below_threshold: number;
 };
+
+export type TopCandidatePreview = {
+  candidate_id: string;
+  full_name: string;
+  email: string;
+  experience_years?: number | null;
+  preview_score?: number | null;
+};

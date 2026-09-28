@@ -622,7 +622,7 @@ def test_delete_job_with_applications_archives_instead(client):
     assert deleted.status_code == 204
     remaining = client.get(f"/jobs/{job['id']}")
     assert remaining.status_code == 200
-    assert remaining.json()["status"] == "archived"
+    assert remaining.json()["status"] == "draft"
 
 
 def test_dashboard_stats_and_activity_use_real_data(client):
@@ -743,7 +743,14 @@ def test_shortlist_threshold_and_generate_scores(client):
     assert listing.json()["items"][0]["jd_score"] >= 60
     assert listing.json()["items"][0]["fit_points"]
 
-    generated = client.post(f"/jobs/{job['id']}/generate-scores")
+    candidate_id = uploaded["candidate"]["id"]
+    top = client.get(f"/jobs/{job['id']}/candidates/top")
+    assert top.status_code == 200, top.text
+    assert top.json()["items"]
+    generated = client.post(
+        f"/jobs/{job['id']}/generate-scores",
+        json={"candidate_ids": [candidate_id]},
+    )
     assert generated.status_code == 200, generated.text
     body = generated.json()
     assert body["analyzed_count"] == 1

@@ -19,7 +19,10 @@ from backend.schemas import (
     CandidateRead,
     DashboardActivity,
     DashboardStats,
+    GenerateScoresRequest,
     GenerateScoresResult,
+    TopCandidatesResponse,
+    TopCandidatePreview,
     JobCreate,
     JobParsePreview,
     JobRead,
@@ -228,15 +231,35 @@ def delete_job(
     return Response(status_code=204)
 
 
-@router.post("/jobs/{job_id}/generate-scores", response_model=GenerateScoresResult)
-def generate_job_scores(
+@router.get("/jobs/{job_id}/candidates/top", response_model=TopCandidatesResponse)
+def top_job_candidates(
     job_id: uuid.UUID,
+    limit: int = Query(10, ge=1, le=10),
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
     storage: FileStorage = Depends(get_file_storage),
     settings: Settings = Depends(get_settings),
 ):
-    return CandidateService(db, ai, storage, settings).generate_scores(job_id)
+    service = CandidateService(db, ai, storage, settings)
+    items = [
+        TopCandidatePreview.model_validate(item)
+        for item in service.top_candidates(job_id, limit=limit)
+    ]
+    return TopCandidatesResponse(job_id=job_id, items=items)
+
+
+@router.post("/jobs/{job_id}/generate-scores", response_model=GenerateScoresResult)
+def generate_job_scores(
+    job_id: uuid.UUID,
+    payload: GenerateScoresRequest,
+    db: Session = Depends(get_db),
+    ai: AIProvider = Depends(get_ai_provider),
+    storage: FileStorage = Depends(get_file_storage),
+    settings: Settings = Depends(get_settings),
+):
+    return CandidateService(db, ai, storage, settings).generate_scores(
+        job_id, candidate_ids=payload.candidate_ids
+    )
 
 
 @router.post("/jobs/{job_id}/resume", response_model=ResumeUploadResult, status_code=201)
