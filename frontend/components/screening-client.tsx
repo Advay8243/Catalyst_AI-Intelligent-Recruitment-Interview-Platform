@@ -8,11 +8,9 @@ import {
   FileText,
   LoaderCircle,
   Phone,
-  Plus,
   RefreshCw,
   Search,
   Sparkles,
-  Upload,
   X,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -41,7 +39,7 @@ import type {
 import { formatEmailStatus, formatShortDate, friendlyErrorMessage, initials } from "@/lib/utils";
 
 const PAGE_SIZE = 10;
-const ANALYZE_MS = 4500;
+const RESUME_ANALYZE_MS = 4500;
 
 type Notice = { message: string; error?: boolean };
 type ScoreFilter = "all" | "80-100" | "60-79" | "0-59";
@@ -75,12 +73,15 @@ export function ScreeningClient() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [drawer, setDrawer] = useState<"jd" | "hr" | null>(null);
-  const [uploadKind, setUploadKind] = useState<"jd" | "resume" | null>(null);
+  const [uploadKind, setUploadKind] = useState<"jd" | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [scoresReady, setScoresReady] = useState(Boolean(initialJobId));
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeProgress, setAnalyzeProgress] = useState(0);
+  const [analyzeMessage, setAnalyzeMessage] = useState("");
+  const [analyzeIndex, setAnalyzeIndex] = useState(0);
+  const [analyzeTotal, setAnalyzeTotal] = useState(0);
   const [updatingDecisionId, setUpdatingDecisionId] = useState<string | null>(null);
   const [topCandidates, setTopCandidates] = useState<TopCandidatePreview[]>([]);
   const [selectedForScoring, setSelectedForScoring] = useState<string[]>([]);
@@ -145,10 +146,10 @@ export function ScreeningClient() {
   }, [jobId]);
 
   useEffect(() => {
-    if (jobId && selectedJob && !scoresReady) {
+    if (jobId && selectedJob) {
       void loadTopCandidates();
     }
-  }, [jobId, selectedJob, scoresReady, loadTopCandidates]);
+  }, [jobId, selectedJob, loadTopCandidates]);
 
   const query = useMemo<CandidateQuery>(() => {
     const resumeRange = scoreRange(resumeScoreFilter);
@@ -199,15 +200,9 @@ export function ScreeningClient() {
   }, [notice]);
 
   useEffect(() => {
-    if (!analyzing) return;
-    setAnalyzeProgress(8);
-    const started = Date.now();
-    const timer = setInterval(() => {
-      const elapsed = Date.now() - started;
-      setAnalyzeProgress(Math.min(95, Math.round((elapsed / ANALYZE_MS) * 100)));
-    }, 120);
-    return () => clearInterval(timer);
-  }, [analyzing]);
+    if (!analyzing || !analyzeTotal) return;
+    setAnalyzeProgress(Math.round((analyzeIndex / analyzeTotal) * 100));
+  }, [analyzing, analyzeIndex, analyzeTotal]);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const showNotice = (message: string, noticeError = false) => setNotice({ message, error: noticeError });
@@ -252,26 +247,40 @@ export function ScreeningClient() {
       showNotice("Select at least one candidate to generate AI scores.", true);
       return;
     }
+    if (analyzing) return;
     setAnalyzing(true);
     setError("");
-    const wait = new Promise((resolve) => setTimeout(resolve, ANALYZE_MS));
+    setAnalyzeTotal(selectedForScoring.length);
+    setAnalyzeIndex(0);
+    setAnalyzeProgress(0);
+    let analyzedCount = 0;
     try {
-      const [, result] = await Promise.all([
-        wait,
-        generateJobScores(jobId, selectedForScoring),
-      ]);
+      for (let index = 0; index < selectedForScoring.length; index += 1) {
+        const candidateId = selectedForScoring[index];
+        setAnalyzeIndex(index + 1);
+        setAnalyzeMessage(`Analyzing resume with AI... (${index + 1} of ${selectedForScoring.length})`);
+        await new Promise((resolve) => setTimeout(resolve, RESUME_ANALYZE_MS));
+        const result = await generateJobScores(jobId, [candidateId]);
+        analyzedCount += result.analyzed_count;
+      }
       setAnalyzeProgress(100);
+      setAnalyzeMessage("Analysis complete.");
       setScoresReady(true);
       setSortBy("jdScore");
       setSortOrder("desc");
       setRefreshKey((key) => key + 1);
       showNotice(
-        `Analyzed ${result.analyzed_count} resume${result.analyzed_count === 1 ? "" : "s"} against this JD.`,
+        `Generated AI Resume Scores for ${analyzedCount} candidate${analyzedCount === 1 ? "" : "s"}.`,
       );
     } catch (caught) {
-      showNotice(friendlyErrorMessage(caught, "Could not generate AI scores."), true);
+      showNotice(friendlyErrorMessage(caught, "Could not generate AI resume scores."), true);
     } finally {
-      setTimeout(() => setAnalyzing(false), 250);
+      setTimeout(() => {
+        setAnalyzing(false);
+        setAnalyzeMessage("");
+        setAnalyzeIndex(0);
+        setAnalyzeTotal(0);
+      }, 250);
     }
   };
 
@@ -303,11 +312,10 @@ export function ScreeningClient() {
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs font-medium text-[#98a2b3]"><span>Recruitment</span><span>/</span><span className="text-[#667085]">Candidate Screening</span></div>
             <h1 className="text-2xl font-bold tracking-tight text-[#101828]">Candidate Screening</h1>
-            <p className="mt-1 text-sm text-[#667085]">Select a JD to review every candidate and their saved AI and HR scores.</p>
+            <p className="mt-1 text-sm text-[#667085]">Select a JD, review semantically matched resumes, then generate AI Resume Scores for your selections.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => setUploadKind("jd")}><FileText className="size-4" />Upload JD</Button>
-            <Button onClick={() => setUploadKind("resume")} disabled={!jobId}><Upload className="size-4" />Upload resumes</Button>
           </div>
         </div>
       </header>
@@ -380,8 +388,8 @@ export function ScreeningClient() {
             <div className="mt-4 rounded-xl border bg-white p-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-sm font-semibold text-[#101828]">Top candidates for this JD</h3>
-                  <p className="text-xs text-[#667085]">Select up to 10 resumes, then generate AI Calculated Scores.</p>
+                  <h3 className="text-sm font-semibold text-[#101828]">Matched resumes for this JD</h3>
+                  <p className="text-xs text-[#667085]">Semantically relevant candidates from your resume pool. Select resumes to run AI Resume Score analysis.</p>
                 </div>
                 <Button
                   onClick={() => void runGenerateScores()}
@@ -389,14 +397,14 @@ export function ScreeningClient() {
                 >
                   <Sparkles className="size-4" />
                   {analyzing
-                    ? "Analyzing…"
-                    : `Generate AI Scores (${selectedForScoring.length} Selected)`}
+                    ? "Processing…"
+                    : `Generate AI Resume Scores (${selectedForScoring.length} Selected)`}
                 </Button>
               </div>
               {loadingTop ? (
-                <p className="text-sm text-[#667085]">Loading ranked candidates…</p>
+                <p className="text-sm text-[#667085]">Finding relevant resumes for this JD…</p>
               ) : topCandidates.length === 0 ? (
-                <p className="text-sm text-[#667085]">Upload resumes for this JD to see ranked candidates here.</p>
+                <p className="text-sm text-[#667085]">Upload resumes on the Candidates page for this job, then return here to screen them.</p>
               ) : (
                 <ul className="space-y-2">
                   {topCandidates.map((item) => (
@@ -406,16 +414,19 @@ export function ScreeningClient() {
                           type="checkbox"
                           className="size-4 rounded border-[#d0d5dd]"
                           checked={selectedForScoring.includes(item.candidate_id)}
+                          disabled={analyzing}
                           onChange={() => toggleScoringCandidate(item.candidate_id)}
                           aria-label={`Select ${item.full_name}`}
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-semibold text-[#101828]">{item.full_name}</span>
                           <span className="block text-xs text-[#667085]">{item.email}</span>
+                          {item.skills && item.skills.length > 0 && (
+                            <span className="mt-0.5 block text-xs text-[#475467]">
+                              {item.skills.slice(0, 5).join(" · ")}
+                            </span>
+                          )}
                         </span>
-                        {item.preview_score != null && (
-                          <Badge tone="purple">{item.preview_score}% match</Badge>
-                        )}
                       </label>
                     </li>
                   ))}
@@ -437,8 +448,8 @@ export function ScreeningClient() {
                 <LoaderCircle className="size-8 text-primary animate-spin" />
               </div>
               <div>
-                <p className="text-lg font-semibold text-[#101828]">Analyzing resumes thoroughly</p>
-                <p className="mt-1 text-sm text-[#667085]">Comparing skills, experience, responsibilities, and education against the selected JD…</p>
+                <p className="text-lg font-semibold text-[#101828]">Analyzing resume with AI…</p>
+                <p className="mt-1 text-sm text-[#667085]">{analyzeMessage || "Comparing resume content against the selected JD…"}</p>
                 <p className="mt-2 text-xs font-medium text-primary">{analyzeProgress}% complete</p>
               </div>
             </div>
@@ -595,9 +606,8 @@ export function ScreeningClient() {
               {!loading && !error && candidates.length === 0 && (
                 <EmptyState
                   icon={<FileText className="size-6" />}
-                  title="No candidates yet"
-                  description="Upload resumes for this JD to see every candidate here, including scores below 60 and analyses still pending."
-                  action={<Button onClick={() => setUploadKind("resume")}><Plus className="size-4" />Upload resumes</Button>}
+                  title="No scored candidates yet"
+                  description="Select matched resumes above and generate AI Resume Scores to populate this table."
                 />
               )}
               {!loading && !error && candidates.length > 0 && (
@@ -618,18 +628,16 @@ export function ScreeningClient() {
 
       <ScoreDrawer candidate={selected} type="jd" open={drawer === "jd"} onOpenChange={(open) => !open && setDrawer(null)} />
       <ScoreDrawer candidate={selected} type="hr" open={drawer === "hr"} onOpenChange={(open) => !open && setDrawer(null)} />
-      {uploadKind && (
+      {uploadKind === "jd" && (
         <UploadDialog
-          kind={uploadKind}
-          open={Boolean(uploadKind)}
+          kind="jd"
+          open
           onOpenChange={(open) => !open && setUploadKind(null)}
           jobId={jobId}
           onComplete={(createdJob) => {
             if (createdJob) {
               setJobs((current) => [createdJob, ...current.filter((job) => job.id !== createdJob.id)]);
               selectJob(createdJob);
-            } else {
-              setScoresReady(true);
             }
             setRefreshKey((key) => key + 1);
           }}

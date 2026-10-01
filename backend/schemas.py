@@ -235,7 +235,7 @@ class JobSearchResponse(BaseModel):
 
 
 class GenerateScoresRequest(BaseModel):
-    candidate_ids: list[uuid.UUID] = Field(default_factory=list, min_length=1, max_length=10)
+    candidate_ids: list[uuid.UUID] = Field(default_factory=list, min_length=1, max_length=50)
 
 
 class GenerateScoresResult(BaseModel):
@@ -250,9 +250,12 @@ class TopCandidatePreview(BaseModel):
     full_name: str
     email: EmailStr
     experience_years: int | None = None
-    preview_score: int | None = Field(
+    skills: list[str] = Field(default_factory=list)
+    relevance_similarity: float | None = Field(
         default=None,
-        description="Latest saved JD match score when available.",
+        ge=0.0,
+        le=1.0,
+        description="Semantic relevance only; not the final AI resume score.",
     )
 
 

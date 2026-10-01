@@ -377,6 +377,7 @@ class CandidateService:
         self.settings = settings
         self.jobs = JobRepository(db)
         self.candidates = CandidateRepository(db)
+        self.embeddings = EmbeddingService(settings)
 
     def upload_resume(
         self, job_id: uuid.UUID, filename: str, mime_type: str, content: bytes
@@ -790,45 +791,61 @@ class CandidateService:
         )
 
     def top_candidates(
-        self, job_id: uuid.UUID, limit: int = 10
+        self, job_id: uuid.UUID, limit: int = 50
     ) -> list[dict[str, object]]:
+        """Rank job applications by semantic relevance without persisting AI scores."""
         job = self.jobs.get(job_id)
         if not job:
             raise NotFoundError("Job not found")
-        if not job.requirements:
+        if not job.requirements or not self.embeddings:
             return []
         requirements = JDRequirements.model_validate(job.requirements.structured_data)
+        job_vector = job.embedding
+        if not job_vector:
+            job_vector = self.embeddings.embed_job(
+                title=job.title,
+                description=job.description,
+                summary_bullets=requirements.summary_bullets,
+                required_skills=requirements.required_skills,
+                preferred_skills=requirements.preferred_skills,
+            )
+            job.embedding = job_vector
+            self.db.commit()
         rows = self.db.execute(
-            select(Application, Candidate, Resume, ResumeAnalysis)
+            select(Application, Candidate, Resume)
             .join(Candidate, Candidate.id == Application.candidate_id)
             .join(Resume, Resume.id == Application.resume_id)
-            .outerjoin(
-                ResumeAnalysis,
-                (ResumeAnalysis.resume_id == Resume.id)
-                & (ResumeAnalysis.job_id == Application.job_id),
-            )
             .where(Application.job_id == job_id)
         ).all()
-        ranked: list[tuple[int, Candidate, int | None]] = []
-        for _application, candidate, resume, analysis in rows:
-            preview_score: int | None = analysis.overall_score if analysis else None
-            if preview_score is None:
-                parsed = ParsedResume.model_validate(resume.parsed_data)
-                preview_score = self.ai.match_resume(
-                    parsed, requirements, self.settings.scoring_weights
-                ).overall_score
+        ranked: list[tuple[float, Candidate, int | None, list[str]]] = []
+        for _application, candidate, resume in rows:
+            parsed = ParsedResume.model_validate(resume.parsed_data)
+            resume_text = "\n".join(
+                part
+                for part in [
+                    candidate.full_name,
+                    " ".join(parsed.skills),
+                    " ".join(parsed.highlights),
+                    " ".join(parsed.employment_history),
+                ]
+                if part
+            )
+            similarity = cosine_similarity(
+                job_vector, self.embeddings.embed_text(resume_text)
+            )
             years = int((candidate.profile or {}).get("years_experience") or 0)
-            ranked.append((preview_score, candidate, years))
+            ranked.append((similarity, candidate, years or None, list(parsed.skills[:8])))
         ranked.sort(key=lambda item: item[0], reverse=True)
         items: list[dict[str, object]] = []
-        for score, candidate, years in ranked[:limit]:
+        for similarity, candidate, years, skills in ranked[:limit]:
             items.append(
                 {
                     "candidate_id": candidate.id,
                     "full_name": candidate.full_name,
                     "email": candidate.email,
-                    "experience_years": years or None,
-                    "preview_score": score,
+                    "experience_years": years,
+                    "skills": skills,
+                    "relevance_similarity": round(similarity, 4),
                 }
             )
         return items
@@ -858,8 +875,8 @@ class CandidateService:
             ]
             if not applications:
                 raise ValueError("No matching candidates found for this job.")
-            if len(applications) > 10:
-                raise ValueError("Select at most ten candidates to generate scores.")
+            if len(applications) > 50:
+                raise ValueError("Select at most fifty candidates to generate scores.")
         analyzed = 0
         shortlisted = 0
         below = 0
