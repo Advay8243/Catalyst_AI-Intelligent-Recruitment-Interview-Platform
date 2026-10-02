@@ -439,5 +439,6 @@ export type TopCandidatePreview = {
   full_name: string;
   email: string;
   experience_years?: number | null;
-  preview_score?: number | null;
+  skills?: string[];
+  relevance_similarity?: number | null;
 };

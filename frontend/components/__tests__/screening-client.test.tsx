@@ -87,13 +87,15 @@ describe("ScreeningClient", () => {
               candidate_id: "cand-1",
               full_name: "Maya Chen",
               email: "maya@example.com",
-              preview_score: 88,
+              skills: ["Figma", "Research"],
+              relevance_similarity: 0.88,
             },
             {
               candidate_id: "cand-2",
               full_name: "Noah Singh",
               email: "noah@example.com",
-              preview_score: 42,
+              skills: ["Sketch"],
+              relevance_similarity: 0.42,
             },
           ],
         });
@@ -128,10 +130,10 @@ describe("ScreeningClient", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ScreeningClient />);
     await user.click(await screen.findByRole("button", { name: "Lead Product Designer" }));
-    expect(await screen.findByText("Top candidates for this JD")).toBeInTheDocument();
+    expect(await screen.findByText("Matched resumes for this JD")).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Select Maya Chen" }));
-    await user.click(screen.getByRole("button", { name: "Generate AI Scores (1 Selected)" }));
-    expect(screen.getByText(/Analyzing resumes thoroughly/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Generate AI Resume Scores (1 Selected)" }));
+    expect(screen.getByRole("status")).toHaveTextContent(/Analyzing resume with AI/i);
     await act(() => vi.advanceTimersByTimeAsync(4600));
     expect(await screen.findByText("Candidates")).toBeInTheDocument();
     expect(await screen.findByText("Maya Chen")).toBeInTheDocument();
@@ -154,7 +156,7 @@ describe("ScreeningClient", () => {
     render(<ScreeningClient />);
 
     expect(await screen.findByText("Maya Chen")).toBeInTheDocument();
-    expect(screen.queryByText("Top candidates for this JD")).not.toBeInTheDocument();
+    expect(screen.queryByText("Matched resumes for this JD")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "AI Calculated Score for Maya Chen" })).toBeInTheDocument();
   });
 

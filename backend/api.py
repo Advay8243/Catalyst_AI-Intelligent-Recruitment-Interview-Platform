@@ -234,7 +234,7 @@ def delete_job(
 @router.get("/jobs/{job_id}/candidates/top", response_model=TopCandidatesResponse)
 def top_job_candidates(
     job_id: uuid.UUID,
-    limit: int = Query(10, ge=1, le=10),
+    limit: int = Query(50, ge=1, le=50),
     db: Session = Depends(get_db),
     ai: AIProvider = Depends(get_ai_provider),
     storage: FileStorage = Depends(get_file_storage),
