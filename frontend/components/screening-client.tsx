@@ -158,7 +158,7 @@ export function ScreeningClient() {
       jobId: jobId || undefined,
       sortBy,
       sortOrder,
-      minScore: resumeRange.min ?? "0",
+      minScore: resumeRange.min,
       maxScore: resumeRange.max,
       minHrScore: hrRange.min,
       maxHrScore: hrRange.max,

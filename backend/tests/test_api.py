@@ -200,8 +200,12 @@ def test_hr_call_transcript_analysis_updates_candidate_score(client):
     session = created.json()
     assert session["status"] == "not_started"
     assert session["candidate"]["jd_resume_score"] >= 80
-    assert len(session["questions"]) >= 8
+    assert session["questions"] == []
     assert session["realtime_transcription_available"] is False
+    generated = client.post(f"/call-sessions/{session['id']}/generate-questions")
+    assert generated.status_code == 200, generated.text
+    session = generated.json()
+    assert len(session["questions"]) >= 8
     assert any(
         q.get("reason") for q in session["questions"]
     ), "Questions should include generation reasons"
@@ -253,6 +257,8 @@ def complete_screening(client, job_id: str, candidate_id: str):
         json={"job_id": job_id},
     )
     session_id = created.json()["id"]
+    generated = client.post(f"/call-sessions/{session_id}/generate-questions")
+    assert generated.status_code == 200, generated.text
     pasted = client.post(
         f"/call-sessions/{session_id}/paste-transcript",
         json={
@@ -773,6 +779,38 @@ def test_jd_summary_bullets_scoring_criteria_and_semantic_search(client):
     assert hits
     assert hits[0]["job"]["id"] == created["id"]
     assert 0 < hits[0]["similarity"] <= 1
+
+
+def test_talent_pool_upload_match_and_score(client):
+    job = create_job(client)
+    uploaded = client.post(
+        "/candidates/resume",
+        files={
+            "file": (
+                "alex.docx",
+                docx_resume(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    candidate_id = uploaded.json()["candidate"]["id"]
+    pool = client.get("/candidates")
+    assert pool.status_code == 200
+    assert pool.json()["total"] >= 1
+    top = client.get(f"/jobs/{job['id']}/candidates/top")
+    assert top.status_code == 200, top.text
+    assert any(item["candidate_id"] == candidate_id for item in top.json()["items"])
+    generated = client.post(
+        f"/jobs/{job['id']}/generate-scores",
+        json={"candidate_ids": [candidate_id]},
+    )
+    assert generated.status_code == 200, generated.text
+    listing = client.get(f"/jobs/{job['id']}/candidates")
+    item = listing.json()["items"][0]
+    assert item["jd_score"] is not None
+    assert item["fit_points"]
+    assert not str(item["fit_points"][0]).startswith("Required skills evidenced:")
 
 
 def test_shortlist_threshold_and_generate_scores(client):

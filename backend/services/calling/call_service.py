@@ -49,13 +49,15 @@ class CallService:
             .order_by(CallSession.created_at.desc())
         )
         if existing:
+            existing.questions = []
+            self.db.commit()
+            self.db.refresh(existing)
             return self._read(existing)
-        questions = self._generate_questions(application)
         session = CallSession(
             candidate_id=application.candidate_id,
             job_id=application.job_id,
             application_id=application.id,
-            questions=[question.model_dump(mode="json") for question in questions],
+            questions=[],
             transcript_source="none",
         )
         self.db.add(session)
@@ -65,6 +67,19 @@ class CallService:
 
     def get_session(self, session_id: uuid.UUID) -> CallSessionRead:
         return self._read(self._session(session_id))
+
+    def generate_questions(self, session_id: uuid.UUID) -> CallSessionRead:
+        session = self._session(session_id)
+        if session.status == "completed":
+            raise ValueError("Cannot generate questions for a completed call.")
+        application = self.db.get(Application, session.application_id)
+        if not application:
+            raise NotFoundError("Application not found")
+        questions = self._generate_questions(application)
+        session.questions = [question.model_dump(mode="json") for question in questions]
+        self.db.commit()
+        self.db.refresh(session)
+        return self._read(session)
 
     def start(self, session_id: uuid.UUID) -> CallSessionRead:
         session = self._session(session_id)

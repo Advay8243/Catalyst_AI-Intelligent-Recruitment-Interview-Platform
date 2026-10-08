@@ -6,33 +6,19 @@ import { useCallback, useEffect, useState } from "react";
 import { EmptyState, ErrorBanner } from "@/components/empty-state";
 import { UploadDialog } from "@/components/upload-dialog";
 import { Button, Input, Skeleton } from "@/components/ui";
-import { getCandidates, getJobs } from "@/lib/api";
-import type { Candidate, Job } from "@/lib/types";
+import { getCandidates } from "@/lib/api";
+import type { Candidate } from "@/lib/types";
 import { friendlyErrorMessage, initials } from "@/lib/utils";
 
 export function CandidatesClient() {
   const router = useRouter();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [uploadJobId, setUploadJobId] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-
-  useEffect(() => {
-    getJobs()
-      .then((items) => {
-        const published = items.filter((job) => job.status === "published");
-        setJobs(published);
-        if (published.length && !uploadJobId) {
-          setUploadJobId(published[0].id);
-        }
-      })
-      .catch(() => setJobs([]));
-  }, [uploadJobId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,27 +56,11 @@ export function CandidatesClient() {
               <span>Recruitment</span><span>/</span><span className="text-[#667085]">Candidates</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-[#101828]">Candidates</h1>
-            <p className="mt-1 text-sm text-[#667085]">Upload and manage candidate resumes. AI scoring happens in Candidate Screening.</p>
+            <p className="mt-1 text-sm text-[#667085]">Upload and manage resumes in your talent pool. AI scoring happens in Candidate Screening.</p>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="block text-sm">
-              <span className="mb-1 block text-xs font-medium text-[#667085]">Associate with job</span>
-              <select
-                aria-label="Job for resume upload"
-                value={uploadJobId}
-                onChange={(event) => setUploadJobId(event.target.value)}
-                className="h-10 min-w-[200px] rounded-lg border bg-white px-3 text-sm shadow-sm"
-              >
-                <option value="">Select a published job</option>
-                {jobs.map((job) => (
-                  <option key={job.id} value={job.id}>{job.title}</option>
-                ))}
-              </select>
-            </label>
-            <Button onClick={() => setUploadOpen(true)} disabled={!uploadJobId}>
-              <Upload className="size-4" />Upload Resume
-            </Button>
-          </div>
+          <Button onClick={() => setUploadOpen(true)}>
+            <Upload className="size-4" />Upload Resume
+          </Button>
         </div>
       </header>
 
@@ -122,12 +92,12 @@ export function CandidatesClient() {
             <EmptyState
               icon={<Users className="size-6" />}
               title="No candidates found"
-              description="Upload a resume and associate it with a published job to add candidates."
+              description="Upload a resume to add candidates to your talent pool."
             />
           ) : (
             <ul className="divide-y">
               {candidates.map((candidate) => (
-                <li key={`${candidate.id}-${candidate.jobId ?? "none"}`}>
+                <li key={`${candidate.id}-${candidate.jobId ?? "pool"}`}>
                   <button
                     type="button"
                     className="flex w-full items-center gap-4 px-5 py-4 text-left hover:bg-[#fcfcfd]"
@@ -140,7 +110,9 @@ export function CandidatesClient() {
                       <span className="block font-semibold text-[#101828]">{candidate.name}</span>
                       <span className="block text-sm text-[#667085]">{candidate.email}</span>
                       {candidate.phone && <span className="mt-0.5 block text-xs text-[#98a2b3]">{candidate.phone}</span>}
-                      {candidate.jobTitle && <span className="mt-0.5 block text-xs text-[#98a2b3]">Applied: {candidate.jobTitle}</span>}
+                      {candidate.jobTitle && candidate.jobTitle !== "Talent pool" && (
+                        <span className="mt-0.5 block text-xs text-[#98a2b3]">Applied: {candidate.jobTitle}</span>
+                      )}
                       {candidate.skills && candidate.skills.length > 0 && (
                         <span className="mt-1 block text-xs text-[#475467]">
                           Skills: {candidate.skills.slice(0, 6).join(", ")}
@@ -159,9 +131,8 @@ export function CandidatesClient() {
         kind="resume"
         open={uploadOpen}
         onOpenChange={setUploadOpen}
-        jobId={uploadJobId}
         onComplete={() => {
-          setNotice("Resume uploaded. It is now available in Candidate Screening for the selected job.");
+          setNotice("Resume uploaded to the talent pool. Select a JD in Candidate Screening to match and score.");
           void load();
         }}
         onNotice={(message, isError) => {

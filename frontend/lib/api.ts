@@ -471,6 +471,15 @@ export async function uploadResumesBatch(
   ) as Promise<BatchResumeResult>;
 }
 
+export async function uploadTalentResumesBatch(
+  files: File[],
+  onProgress: (percent: number) => void,
+): Promise<BatchResumeResult> {
+  const form = new FormData();
+  files.forEach((file) => form.append("files", file));
+  return uploadFiles("/candidates/resumes/batch", form, onProgress) as Promise<BatchResumeResult>;
+}
+
 export async function correctResumeParse(
   candidateId: string,
   jobId: string,
@@ -533,6 +542,13 @@ export async function createCallSession(candidateId: string, jobId?: string): Pr
 
 export async function getCallSession(sessionId: string): Promise<CallSession> {
   return request<CallSession>(`/call-sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export async function generateCallQuestions(sessionId: string): Promise<CallSession> {
+  return request<CallSession>(
+    `/call-sessions/${encodeURIComponent(sessionId)}/generate-questions`,
+    { method: "POST" },
+  );
 }
 
 export async function startCall(sessionId: string): Promise<CallSession> {

@@ -153,8 +153,8 @@ class CandidateListItem(CandidateRead):
     fit_reason: str
     fit_points: list[str] = Field(default_factory=list)
     gap_points: list[str] = Field(default_factory=list)
-    job_id: uuid.UUID
-    job_title: str
+    job_id: uuid.UUID | None = None
+    job_title: str = "Talent pool"
     call_status: str | None = None
     hr_analysis: str | None = None
     skills: list[str] = Field(default_factory=list)
@@ -292,7 +292,7 @@ class BatchResumeItemResult(BaseModel):
 
 
 class BatchResumeUploadResult(BaseModel):
-    job_id: uuid.UUID
+    job_id: uuid.UUID | None = None
     results: list[BatchResumeItemResult]
     success_count: int
     failure_count: int

@@ -21,6 +21,7 @@ import { Badge, Button, Skeleton } from "@/components/ui";
 import {
   completeCall,
   createCallSession,
+  generateCallQuestions,
   getCallSession,
   pasteTranscript,
   startCall,
@@ -41,6 +42,7 @@ const statusLabel: Record<string, string> = {
 };
 
 const ANALYSIS_DURATION_MS = 7600;
+const QUESTION_GENERATE_MS = 3200;
 const ANALYSIS_STAGES = [
   "Reading the full transcript",
   "Checking answer completeness",
@@ -64,6 +66,8 @@ export default function HRScreeningCallPage() {
   const [action, setAction] = useState("");
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [error, setError] = useState("");
+  const [generatingQuestions, setGeneratingQuestions] = useState(false);
+  const [questionProgress, setQuestionProgress] = useState(0);
 
   useEffect(() => {
     createCallSession(candidateId, jobId)
@@ -108,12 +112,38 @@ export default function HRScreeningCallPage() {
   }, [session, realtimeAvailable, active]);
 
   const currentQuestion = useMemo(() => {
-    if (!session) return null;
+    if (!session || session.questions.length === 0) return null;
     const candidateResponses = session.transcript.filter(
       (entry) => entry.speaker === "candidate",
     ).length;
     return session.questions[Math.min(candidateResponses, session.questions.length - 1)];
   }, [session]);
+
+  async function handleGenerateQuestions() {
+    if (!session || generatingQuestions) return;
+    setGeneratingQuestions(true);
+    setQuestionProgress(8);
+    setError("");
+    const started = Date.now();
+    const progressTimer = setInterval(() => {
+      const elapsed = Date.now() - started;
+      setQuestionProgress(Math.min(92, Math.round((elapsed / QUESTION_GENERATE_MS) * 100)));
+    }, 120);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, QUESTION_GENERATE_MS));
+      const next = await generateCallQuestions(session.id);
+      setSession(next);
+      setQuestionProgress(100);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not generate AI questions.");
+    } finally {
+      clearInterval(progressTimer);
+      setTimeout(() => {
+        setGeneratingQuestions(false);
+        setQuestionProgress(0);
+      }, 250);
+    }
+  }
 
   async function handleStart() {
     if (!session) return;
@@ -283,7 +313,7 @@ export default function HRScreeningCallPage() {
                 onClick={() => setShowPaste((value) => !value)}
               >
                 <ClipboardPaste className="size-4" />
-                Paste Existing Transcript
+                Paste Transcript
               </Button>
             )}
           </section>
@@ -319,7 +349,7 @@ export default function HRScreeningCallPage() {
                     <p className="font-semibold">Real-time transcription unavailable</p>
                     <p className="mt-1 text-xs leading-5">
                       The configured call provider does not stream live speech-to-text.
-                      Use <strong>Paste Existing Transcript</strong> to analyze a screening conversation.
+                      Use <strong>Paste Transcript</strong> to analyze a screening conversation.
                     </p>
                   </div>
                 </div>
@@ -339,11 +369,11 @@ export default function HRScreeningCallPage() {
 
           {showPaste && session.status !== "completed" && (
             <div className="shrink-0 border-t bg-[#fcfcfd] p-4">
-              <label htmlFor="existing-transcript" className="mb-2 block text-xs font-semibold uppercase tracking-wide text-[#667085]">
-                Existing Transcript
+              <label htmlFor="pasted-transcript" className="mb-2 block text-xs font-semibold uppercase tracking-wide text-[#667085]">
+                Transcript
               </label>
               <textarea
-                id="existing-transcript"
+                id="pasted-transcript"
                 value={pasteText}
                 onChange={(event) => setPasteText(event.target.value)}
                 placeholder={"HR: Tell me about your Python experience.\nCandidate: I have five years of Python experience…"}
@@ -373,9 +403,25 @@ export default function HRScreeningCallPage() {
             <section className="rounded-xl border bg-white p-5 shadow-panel">
               <h2 className="font-semibold">AI-generated questions</h2>
               <p className="mt-1 text-xs leading-5 text-[#667085]">
-                Adaptive questions derived from this JD and candidate gaps ({session.questions.length}).
+                Generate adaptive questions from this JD and the candidate resume.
               </p>
+              <Button
+                className="mt-4 w-full"
+                onClick={() => void handleGenerateQuestions()}
+                disabled={generatingQuestions || session.status === "completed"}
+              >
+                {generatingQuestions ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                {generatingQuestions ? "Generating AI questions…" : "Generate AI Questions"}
+              </Button>
+              {generatingQuestions && (
+                <p className="mt-2 text-center text-xs font-medium text-primary">{questionProgress}% complete</p>
+              )}
               <div className="mt-4 space-y-3">
+                {session.questions.length === 0 && !generatingQuestions && (
+                  <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-[#667085]">
+                    Click Generate AI Questions to load a fresh set for this visit.
+                  </p>
+                )}
                 {session.questions.map((question, index) => (
                   <div
                     key={question.id}

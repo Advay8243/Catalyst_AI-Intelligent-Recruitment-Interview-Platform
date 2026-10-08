@@ -149,7 +149,7 @@ describe("ScreeningClient", () => {
     navigation.jobId = "job-1";
     render(<ScreeningClient />);
     expect(await screen.findByText("Matched resumes for this JD")).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Select Maya Chen" })).toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: "Select Maya Chen" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate AI Resume Scores (0 Selected)" })).toBeDisabled();
     expect(await screen.findByRole("button", { name: "AI Calculated Score for Maya Chen" })).toBeInTheDocument();
   });

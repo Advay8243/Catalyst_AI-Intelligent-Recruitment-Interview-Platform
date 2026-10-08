@@ -51,6 +51,19 @@ def get_call_session(
     return CallService(db, provider, ai).get_session(session_id)
 
 
+@router.post(
+    "/call-sessions/{session_id}/generate-questions",
+    response_model=CallSessionRead,
+)
+def generate_call_questions(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    provider: CallProvider = Depends(get_call_provider),
+    ai: AIProvider = Depends(get_ai_provider),
+):
+    return CallService(db, provider, ai).generate_questions(session_id)
+
+
 @router.post("/call-sessions/{session_id}/start", response_model=CallSessionRead)
 def start_call(
     session_id: uuid.UUID,
