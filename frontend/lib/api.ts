@@ -287,7 +287,7 @@ export async function getScoringCriteria(): Promise<ScoringCriteria> {
   return request<ScoringCriteria>("/scoring-criteria");
 }
 
-export async function getTopCandidates(jobId: string, limit = 10): Promise<TopCandidatePreview[]> {
+export async function getTopCandidates(jobId: string, limit = 50): Promise<TopCandidatePreview[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   const raw = await request<{ items?: TopCandidatePreview[] }>(
     `/jobs/${encodeURIComponent(jobId)}/candidates/top?${params}`,

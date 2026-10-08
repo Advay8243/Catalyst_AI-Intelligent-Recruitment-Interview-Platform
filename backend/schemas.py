@@ -278,7 +278,7 @@ class AnalysisRead(BaseModel):
 
 class ResumeUploadResult(BaseModel):
     candidate: CandidateRead
-    analysis: AnalysisRead
+    analysis: AnalysisRead | None = None
     status: str = "success"
     filename: str | None = None
 

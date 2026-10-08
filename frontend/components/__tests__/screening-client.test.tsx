@@ -136,15 +136,29 @@ describe("ScreeningClient", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/Analyzing resume with AI/i);
     await act(() => vi.advanceTimersByTimeAsync(4600));
     expect(await screen.findByText("Candidates")).toBeInTheDocument();
-    expect(await screen.findByText("Maya Chen")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "AI Calculated Score for Maya Chen" })).toBeInTheDocument();
+    const scoreCalls = vi.mocked(fetch).mock.calls.filter(
+      ([url, init]) => String(url).includes("/generate-scores") && init?.method === "POST",
+    );
+    expect(scoreCalls).toHaveLength(1);
+    expect(JSON.parse(String(scoreCalls[0][1]?.body))).toEqual({ candidate_ids: ["cand-1"] });
     vi.useRealTimers();
+  });
+
+  it("keeps checkboxes visible when opening screening with a selected job", async () => {
+    navigation.jobId = "job-1";
+    render(<ScreeningClient />);
+    expect(await screen.findByText("Matched resumes for this JD")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select Maya Chen" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate AI Resume Scores (0 Selected)" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "AI Calculated Score for Maya Chen" })).toBeInTheDocument();
   });
 
   it("opens AI Calculated Score breakdown", async () => {
     navigation.jobId = "job-1";
     const user = userEvent.setup();
     render(<ScreeningClient />);
-    await screen.findByText("Maya Chen");
+    await screen.findByRole("button", { name: "AI Calculated Score for Maya Chen" });
     await user.click(screen.getByRole("button", { name: "AI Calculated Score for Maya Chen" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("AI Calculated Score");
@@ -155,16 +169,15 @@ describe("ScreeningClient", () => {
     navigation.jobId = "job-1";
     render(<ScreeningClient />);
 
-    expect(await screen.findByText("Maya Chen")).toBeInTheDocument();
-    expect(screen.queryByText("Matched resumes for this JD")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "AI Calculated Score for Maya Chen" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "AI Calculated Score for Maya Chen" })).toBeInTheDocument();
+    expect(screen.getByText("Matched resumes for this JD")).toBeInTheDocument();
   });
 
   it("updates an evaluated candidate decision from the table", async () => {
     navigation.jobId = "job-1";
     const user = userEvent.setup();
     render(<ScreeningClient />);
-    await screen.findByText("Maya Chen");
+    await screen.findByRole("button", { name: "AI Calculated Score for Maya Chen" });
 
     const decisionSelect = screen.getByLabelText("Decision status for Maya Chen");
     await user.selectOptions(decisionSelect, "accepted");

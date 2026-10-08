@@ -99,14 +99,12 @@ export function ScreeningClient() {
             setSelectedJob(match);
             setJobId(match.id);
             setJdQuery(match.title);
-            setScoresReady(true);
           } else {
             getJob(initialJobId)
               .then((job) => {
                 setSelectedJob(job);
                 setJobId(job.id);
                 setJdQuery(job.title);
-                setScoresReady(true);
               })
               .catch(() => undefined);
           }
@@ -160,7 +158,7 @@ export function ScreeningClient() {
       jobId: jobId || undefined,
       sortBy,
       sortOrder,
-      minScore: resumeRange.min,
+      minScore: resumeRange.min ?? "0",
       maxScore: resumeRange.max,
       minHrScore: hrRange.min,
       maxHrScore: hrRange.max,
@@ -168,7 +166,7 @@ export function ScreeningClient() {
   }, [page, jobId, sortBy, sortOrder, resumeScoreFilter, hrScoreFilter]);
 
   const loadCandidates = useCallback(async () => {
-    if (!jobId || !scoresReady) {
+    if (!jobId) {
       setCandidates([]);
       setTotal(0);
       return;
@@ -187,7 +185,7 @@ export function ScreeningClient() {
     } finally {
       setLoading(false);
     }
-  }, [jobId, query, scoresReady]);
+  }, [jobId, query]);
 
   useEffect(() => {
     void loadCandidates();
@@ -266,6 +264,7 @@ export function ScreeningClient() {
       setAnalyzeProgress(100);
       setAnalyzeMessage("Analysis complete.");
       setScoresReady(true);
+      setSelectedForScoring([]);
       setSortBy("jdScore");
       setSortOrder("desc");
       setRefreshKey((key) => key + 1);
@@ -384,7 +383,7 @@ export function ScreeningClient() {
               </ul>
             </div>
           )}
-          {selectedJob && !scoresReady && (
+          {selectedJob && (
             <div className="mt-4 rounded-xl border bg-white p-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -406,31 +405,50 @@ export function ScreeningClient() {
               ) : topCandidates.length === 0 ? (
                 <p className="text-sm text-[#667085]">Upload resumes on the Candidates page for this job, then return here to screen them.</p>
               ) : (
-                <ul className="space-y-2">
-                  {topCandidates.map((item) => (
-                    <li key={item.candidate_id}>
-                      <label className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 hover:bg-[#fafbfc]">
-                        <input
-                          type="checkbox"
-                          className="size-4 rounded border-[#d0d5dd]"
-                          checked={selectedForScoring.includes(item.candidate_id)}
-                          disabled={analyzing}
-                          onChange={() => toggleScoringCandidate(item.candidate_id)}
-                          aria-label={`Select ${item.full_name}`}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-semibold text-[#101828]">{item.full_name}</span>
-                          <span className="block text-xs text-[#667085]">{item.email}</span>
-                          {item.skills && item.skills.length > 0 && (
-                            <span className="mt-0.5 block text-xs text-[#475467]">
-                              {item.skills.slice(0, 5).join(" · ")}
-                            </span>
-                          )}
-                        </span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <label className="mb-2 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed px-3 py-2 text-sm text-[#475467]">
+                    <input
+                      type="checkbox"
+                      className="size-4 rounded border-[#d0d5dd]"
+                      checked={topCandidates.length > 0 && selectedForScoring.length === topCandidates.length}
+                      disabled={analyzing}
+                      onChange={() => {
+                        setSelectedForScoring((current) => (
+                          current.length === topCandidates.length
+                            ? []
+                            : topCandidates.map((item) => item.candidate_id)
+                        ));
+                      }}
+                      aria-label="Select all matched resumes"
+                    />
+                    Select all ({topCandidates.length})
+                  </label>
+                  <ul className="space-y-2">
+                    {topCandidates.map((item) => (
+                      <li key={item.candidate_id}>
+                        <label className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 hover:bg-[#fafbfc]">
+                          <input
+                            type="checkbox"
+                            className="size-4 rounded border-[#d0d5dd]"
+                            checked={selectedForScoring.includes(item.candidate_id)}
+                            disabled={analyzing}
+                            onChange={() => toggleScoringCandidate(item.candidate_id)}
+                            aria-label={`Select ${item.full_name}`}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-[#101828]">{item.full_name}</span>
+                            <span className="block text-xs text-[#667085]">{item.email}</span>
+                            {item.skills && item.skills.length > 0 && (
+                              <span className="mt-0.5 block text-xs text-[#475467]">
+                                {item.skills.slice(0, 5).join(" · ")}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
             </div>
           )}
@@ -456,7 +474,7 @@ export function ScreeningClient() {
           </section>
         )}
 
-        {selectedJob && scoresReady && (
+        {selectedJob && (
           <>
             <section className="rounded-xl border bg-white p-3 shadow-panel">
               <div className="flex flex-wrap items-center gap-2">

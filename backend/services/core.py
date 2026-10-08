@@ -439,16 +439,10 @@ class CandidateService:
             content_hash=content_hash,
             parsed_data=parsed.model_dump(mode="json"),
         )
-        requirements = JDRequirements.model_validate(job.requirements.structured_data)
-        try:
-            result = self.ai.match_resume(parsed, requirements, self.settings.scoring_weights)
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError("Matching failed for this resume.") from exc
-        analysis = self._analysis(job_id, resume, result)
         application = Application(
             job_id=job_id, candidate_id=candidate.id, resume=resume, status="new"
         )
-        self.db.add_all([resume, analysis, application])
+        self.db.add_all([resume, application])
         self.db.flush()
         if candidate_was_new:
             record_audit(
@@ -466,18 +460,9 @@ class CandidateService:
             description=f"Resume uploaded: {safe_name}.",
             metadata={"resume_id": str(resume.id), "filename": safe_name},
         )
-        record_audit(
-            self.db,
-            candidate_id=candidate.id,
-            application_id=application.id,
-            event_type="resume_analyzed",
-            description=f"Resume analyzed against {job.title}.",
-            metadata={"overall_score": result.overall_score},
-        )
         self.db.commit()
         self.db.refresh(candidate)
-        self.db.refresh(analysis)
-        return candidate, analysis
+        return candidate, None
 
     def upload_resumes_batch(
         self, job_id: uuid.UUID, files: list[tuple[str, str, bytes]]
@@ -762,7 +747,7 @@ class CandidateService:
                     application_status=status,
                     jd_score=jd_score,
                     hr_score=hr_score,
-                    fit_reason=explanation,
+                    fit_reason=explanation or "",
                     fit_points=fit_points,
                     gap_points=gap_points,
                     job_id=candidate_job_id,
@@ -930,6 +915,14 @@ class CandidateService:
                     )
                 )
             analyzed += 1
+            record_audit(
+                self.db,
+                candidate_id=application.candidate_id,
+                application_id=application.id,
+                event_type="resume_analyzed",
+                description=f"Resume analyzed against {job.title}.",
+                metadata={"overall_score": result.overall_score},
+            )
             if result.overall_score >= SHORTLIST_MIN_SCORE:
                 shortlisted += 1
             else:
