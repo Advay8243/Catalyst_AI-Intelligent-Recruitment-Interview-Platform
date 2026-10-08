@@ -6,6 +6,7 @@ import {
   createJob,
   parseJobDescription,
   uploadResumesBatch,
+  uploadTalentResumesBatch,
 } from "@/lib/api";
 import type { Job, JobRequirements } from "@/lib/types";
 import { Button, Dialog, DialogContent, Input, Progress } from "@/components/ui";
@@ -46,7 +47,7 @@ export function UploadDialog({
   kind: UploadKind;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  jobId: string;
+  jobId?: string;
   onComplete: (createdJob?: Job) => void;
   onNotice: (message: string, error?: boolean) => void;
 }) {
@@ -143,10 +144,6 @@ export function UploadDialog({
   };
 
   const uploadResumes = async () => {
-    if (!jobId) {
-      onNotice("Select or upload a job description before uploading resumes.", true);
-      return;
-    }
     if (!files.length) return;
     if (files.some((file) => !isSupportedDocument(file))) {
       onNotice("Unable to process this resume. Please verify that the uploaded file is a valid PDF or DOCX.", true);
@@ -161,7 +158,9 @@ export function UploadDialog({
     setStage(`Processing ${files.length} resume${files.length === 1 ? "" : "s"}`);
     setProgress(12);
     try {
-      const result = await uploadResumesBatch(jobId, files, setProgress);
+      const result = jobId
+        ? await uploadResumesBatch(jobId, files, setProgress)
+        : await uploadTalentResumesBatch(files, setProgress);
       setFileStatuses(
         result.results.map((item) => ({
           name: item.filename,
@@ -193,16 +192,11 @@ export function UploadDialog({
         title={kind === "resume" ? "Upload resumes" : "Add job description"}
         description={
           kind === "resume"
-            ? "Upload one or more PDF/DOCX resumes for the selected job. Failed files do not block the rest."
+            ? "Upload one or more PDF/DOCX resumes to your talent pool. Failed files do not block the rest."
             : "Upload a JD file, review extracted fields, then save as draft or publish."
         }
         className="max-w-2xl"
       >
-        {kind === "resume" && !jobId && (
-          <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Select a job first, or upload a job description before adding resumes.
-          </p>
-        )}
         <div className="mt-5 max-h-[60vh] space-y-4 overflow-y-auto pr-1">
           {kind === "jd" && mode === "form" ? (
             <div className="grid gap-3 sm:grid-cols-2">

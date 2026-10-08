@@ -38,7 +38,7 @@ def create_job(client):
     return response.json()
 
 
-def upload_candidate(client, job_id: str):
+def upload_candidate(client, job_id: str, *, generate_score: bool = True):
     response = client.post(
         f"/jobs/{job_id}/resume",
         files={
@@ -50,6 +50,25 @@ def upload_candidate(client, job_id: str):
         },
     )
     assert response.status_code == 201, response.text
+    body = response.json()
+    if generate_score:
+        candidate_id = body["candidate"]["id"]
+        score_candidates(client, job_id, [candidate_id])
+        detail = client.get(
+            f"/candidates/{candidate_id}/resume-analysis",
+            params={"job_id": job_id},
+        )
+        assert detail.status_code == 200, detail.text
+        body["analysis"] = detail.json()
+    return body
+
+
+def score_candidates(client, job_id: str, candidate_ids: list[str]):
+    response = client.post(
+        f"/jobs/{job_id}/generate-scores",
+        json={"candidate_ids": candidate_ids},
+    )
+    assert response.status_code == 200, response.text
     return response.json()
 
 
@@ -78,12 +97,17 @@ def test_multipart_job_description(client):
 
 def test_resume_upload_candidate_listing_and_analysis(client):
     job = create_job(client)
-    uploaded = upload_candidate(client, job["id"])
+    uploaded = upload_candidate(client, job["id"], generate_score=False)
     candidate = uploaded["candidate"]
-    analysis = uploaded["analysis"]
-    assert analysis["overall_score"] >= 80
-    assert analysis["scoring"]["skills"]["weight"] == 40
-    assert "protected traits are excluded" in analysis["explanation"]
+    assert uploaded.get("analysis") is None
+
+    pending = client.get(f"/jobs/{job['id']}/candidates")
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["total"] == 1
+    assert pending.json()["items"][0]["jd_score"] is None
+
+    scored = score_candidates(client, job["id"], [candidate["id"]])
+    assert scored["analyzed_count"] == 1
 
     listing = client.get(
         f"/jobs/{job['id']}/candidates",
@@ -98,6 +122,9 @@ def test_resume_upload_candidate_listing_and_analysis(client):
         params={"job_id": job["id"]},
     )
     assert detail.status_code == 200
+    assert detail.json()["overall_score"] >= 80
+    assert detail.json()["scoring"]["skills"]["weight"] == 40
+    assert "protected traits are excluded" in detail.json()["explanation"]
     assert detail.json()["evidence"]["skills"]
 
 
@@ -108,7 +135,15 @@ def test_resume_upload_infers_docx_when_browser_sends_octet_stream(client):
         files={"file": ("alex.docx", docx_resume(), "application/octet-stream")},
     )
     assert response.status_code == 201, response.text
-    assert response.json()["analysis"]["overall_score"] >= 80
+    assert response.json()["analysis"] is None
+    candidate_id = response.json()["candidate"]["id"]
+    score_candidates(client, job["id"], [candidate_id])
+    detail = client.get(
+        f"/candidates/{candidate_id}/resume-analysis",
+        params={"job_id": job["id"]},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["overall_score"] >= 80
 
 
 def test_upload_validation_and_duplicate_application(client):
@@ -165,8 +200,12 @@ def test_hr_call_transcript_analysis_updates_candidate_score(client):
     session = created.json()
     assert session["status"] == "not_started"
     assert session["candidate"]["jd_resume_score"] >= 80
-    assert len(session["questions"]) >= 8
+    assert session["questions"] == []
     assert session["realtime_transcription_available"] is False
+    generated = client.post(f"/call-sessions/{session['id']}/generate-questions")
+    assert generated.status_code == 200, generated.text
+    session = generated.json()
+    assert len(session["questions"]) >= 8
     assert any(
         q.get("reason") for q in session["questions"]
     ), "Questions should include generation reasons"
@@ -218,6 +257,8 @@ def complete_screening(client, job_id: str, candidate_id: str):
         json={"job_id": job_id},
     )
     session_id = created.json()["id"]
+    generated = client.post(f"/call-sessions/{session_id}/generate-questions")
+    assert generated.status_code == 200, generated.text
     pasted = client.post(
         f"/call-sessions/{session_id}/paste-transcript",
         json={
@@ -581,6 +622,12 @@ def test_batch_resume_upload_duplicate_hash_and_isolated_failures(client):
     assert statuses["jordan.docx"] == "success"
     assert statuses["bad.txt"] == "failed"
     assert statuses["alex-copy.docx"] == "duplicate"
+    scored_ids = [
+        item["candidate"]["id"]
+        for item in payload["results"]
+        if item["status"] == "success" and item.get("candidate")
+    ]
+    score_candidates(client, job["id"], scored_ids)
     listing = client.get(f"/jobs/{job['id']}/candidates")
     assert listing.json()["total"] == 2
     breakdown = listing.json()["items"][0]["score_breakdown"]
@@ -592,6 +639,7 @@ def test_resume_parse_correction_updates_match_and_audit(client):
     job = create_job(client)
     uploaded = upload_candidate(client, job["id"])
     candidate_id = uploaded["candidate"]["id"]
+    analysis = uploaded["analysis"]
     corrected = client.post(
         f"/candidates/{candidate_id}/resume-parse-correction",
         json={
@@ -604,7 +652,7 @@ def test_resume_parse_correction_updates_match_and_audit(client):
     )
     assert corrected.status_code == 200, corrected.text
     assert corrected.json()["corrected_by"] == "Test HR User"
-    assert corrected.json()["analysis"]["overall_score"] >= uploaded["analysis"]["overall_score"]
+    assert corrected.json()["analysis"]["overall_score"] >= analysis["overall_score"]
     review = client.get(
         f"/candidates/{candidate_id}/review", params={"job_id": job["id"]}
     ).json()
@@ -733,30 +781,75 @@ def test_jd_summary_bullets_scoring_criteria_and_semantic_search(client):
     assert 0 < hits[0]["similarity"] <= 1
 
 
+def test_talent_pool_upload_match_and_score(client):
+    job = create_job(client)
+    uploaded = client.post(
+        "/candidates/resume",
+        files={
+            "file": (
+                "alex.docx",
+                docx_resume(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    candidate_id = uploaded.json()["candidate"]["id"]
+    pool = client.get("/candidates")
+    assert pool.status_code == 200
+    assert pool.json()["total"] >= 1
+    top = client.get(f"/jobs/{job['id']}/candidates/top")
+    assert top.status_code == 200, top.text
+    assert any(item["candidate_id"] == candidate_id for item in top.json()["items"])
+    generated = client.post(
+        f"/jobs/{job['id']}/generate-scores",
+        json={"candidate_ids": [candidate_id]},
+    )
+    assert generated.status_code == 200, generated.text
+    listing = client.get(f"/jobs/{job['id']}/candidates")
+    item = listing.json()["items"][0]
+    assert item["jd_score"] is not None
+    assert item["fit_points"]
+    assert not str(item["fit_points"][0]).startswith("Required skills evidenced:")
+
+
 def test_shortlist_threshold_and_generate_scores(client):
     job = create_job(client)
-    uploaded = upload_candidate(client, job["id"])
+    uploaded = upload_candidate(client, job["id"], generate_score=False)
     listing = client.get(f"/jobs/{job['id']}/candidates")
     assert listing.status_code == 200
     assert listing.json()["shortlisted_threshold"] == 60
     assert listing.json()["total_uploaded"] == 1
-    assert listing.json()["items"][0]["jd_score"] >= 60
-    assert listing.json()["items"][0]["fit_points"]
+    assert listing.json()["items"][0]["jd_score"] is None
 
-    candidate_id = uploaded["candidate"]["id"]
-    top = client.get(f"/jobs/{job['id']}/candidates/top")
-    assert top.status_code == 200, top.text
-    assert top.json()["items"]
+    other = client.post(
+        f"/jobs/{job['id']}/resume",
+        files={
+            "file": (
+                "maya.docx",
+                docx_resume(name="Maya Chen", email="maya@example.com"),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert other.status_code == 201, other.text
+    selected_id = uploaded["candidate"]["id"]
+    skipped_id = other.json()["candidate"]["id"]
     generated = client.post(
         f"/jobs/{job['id']}/generate-scores",
-        json={"candidate_ids": [candidate_id]},
+        json={"candidate_ids": [selected_id]},
     )
     assert generated.status_code == 200, generated.text
     body = generated.json()
     assert body["analyzed_count"] == 1
     assert body["shortlisted_count"] == 1
     assert body["job_id"] == job["id"]
-    assert uploaded["candidate"]["id"]
+
+    after = client.get(f"/jobs/{job['id']}/candidates")
+    scores = {item["id"]: item["jd_score"] for item in after.json()["items"]}
+    assert scores[selected_id] >= 60
+    assert scores[skipped_id] is None
+    assert after.json()["items"][0]["fit_points"] or scores[selected_id] >= 60
 
 
 def test_candidate_search_filters_sort_and_comparison(client):
@@ -787,6 +880,7 @@ def test_candidate_search_filters_sort_and_comparison(client):
     assert maya.status_code == 201, maya.text
     maya_id = maya.json()["candidate"]["id"]
     alex_id = alex["candidate"]["id"]
+    score_candidates(client, job["id"], [alex_id, maya_id])
 
     by_name = client.get(f"/jobs/{job['id']}/candidates", params={"search": "maya"})
     assert by_name.status_code == 200

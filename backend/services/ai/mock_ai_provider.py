@@ -2,6 +2,7 @@ from backend.schemas import JDRequirements, MatchResult, ParsedResume
 from backend.services.ai.ai_provider import AIProvider
 from backend.services.ai.embeddings import EmbeddingService
 from backend.services.ai.jd_parser import JDParser
+from backend.services.ai.fit_gap_narrator import FitGapNarrator
 from backend.services.ai.resume_matcher import ResumeMatcher
 from backend.services.ai.resume_parser import ResumeParser
 from backend.config import get_settings
@@ -21,6 +22,7 @@ class MockAIProvider(AIProvider):
         self.jd_parser = JDParser()
         self.resume_parser = ResumeParser()
         self.matcher = ResumeMatcher()
+        self.fit_gap_narrator = FitGapNarrator()
         self.screening_analyzer = MockScreeningAnalyzer()
         self.question_generator = ScreeningQuestionGenerator()
         self.embeddings = EmbeddingService(get_settings())
@@ -36,7 +38,27 @@ class MockAIProvider(AIProvider):
     def match_resume(
         self, resume: ParsedResume, requirements: JDRequirements, weights: dict[str, int]
     ) -> MatchResult:
-        return self.matcher.match(resume, requirements, weights)
+        scored = self.matcher.match(resume, requirements, weights)
+        fit_points, gap_points = self.fit_gap_narrator.narrate(resume, requirements, scored)
+        explanation_parts = []
+        if fit_points:
+            explanation_parts.append("Fits: " + "; ".join(fit_points))
+        if gap_points:
+            explanation_parts.append("Does not fit / gaps: " + "; ".join(gap_points))
+        explanation = (
+            " | ".join(explanation_parts)
+            if explanation_parts
+            else scored.explanation
+        ) + " Protected traits are excluded."
+        return scored.model_copy(
+            update={
+                "fit_points": fit_points,
+                "gap_points": gap_points,
+                "explanation": explanation.replace(
+                    "Protected traits are excluded.", "protected traits are excluded."
+                ),
+            }
+        )
 
     def generate_embedding(self, text: str) -> list[float]:
         return self.embeddings.embed_text(text)

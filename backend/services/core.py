@@ -4,7 +4,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.config import Settings
@@ -439,16 +439,10 @@ class CandidateService:
             content_hash=content_hash,
             parsed_data=parsed.model_dump(mode="json"),
         )
-        requirements = JDRequirements.model_validate(job.requirements.structured_data)
-        try:
-            result = self.ai.match_resume(parsed, requirements, self.settings.scoring_weights)
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError("Matching failed for this resume.") from exc
-        analysis = self._analysis(job_id, resume, result)
         application = Application(
             job_id=job_id, candidate_id=candidate.id, resume=resume, status="new"
         )
-        self.db.add_all([resume, analysis, application])
+        self.db.add_all([resume, application])
         self.db.flush()
         if candidate_was_new:
             record_audit(
@@ -466,18 +460,118 @@ class CandidateService:
             description=f"Resume uploaded: {safe_name}.",
             metadata={"resume_id": str(resume.id), "filename": safe_name},
         )
+        self.db.commit()
+        self.db.refresh(candidate)
+        return candidate, None
+
+    def upload_talent_resume(
+        self, filename: str, mime_type: str, content: bytes
+    ) -> Candidate:
+        """Add a resume to the talent pool without linking to a job."""
+        safe_name = sanitize_filename(filename)
+        if not content:
+            raise ValueError("Uploaded file is empty")
+        if len(content) > self.settings.max_upload_bytes:
+            raise ValueError(
+                f"File exceeds maximum size of {self.settings.max_upload_bytes} bytes"
+            )
+        content_hash = hashlib.sha256(content).hexdigest()
+        document_parser = parser_for(safe_name, mime_type)
+        try:
+            parsed = self.ai.parse_resume(document_parser.extract_text(content))
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("Resume parsing failed. Please review the file and try again.") from exc
+        candidate_was_new = self.db.scalar(
+            select(Candidate.id).where(Candidate.email == str(parsed.email))
+        ) is None
+        candidate = self.candidates.upsert(
+            str(parsed.email),
+            {
+                "full_name": parsed.full_name,
+                "phone": parsed.phone,
+                "profile": parsed.model_dump(mode="json"),
+            },
+        )
+        duplicate_hash = self.db.scalar(
+            select(Resume.id).where(
+                Resume.candidate_id == candidate.id,
+                Resume.content_hash == content_hash,
+            ).limit(1)
+        )
+        if duplicate_hash:
+            raise ConflictError("This resume file was already uploaded for this candidate")
+        key = self.storage.save(safe_name, content)
+        resume = Resume(
+            candidate_id=candidate.id,
+            filename=safe_name,
+            mime_type=mime_type,
+            storage_key=key,
+            content_hash=content_hash,
+            parsed_data=parsed.model_dump(mode="json"),
+        )
+        self.db.add(resume)
+        self.db.flush()
+        if candidate_was_new:
+            record_audit(
+                self.db,
+                candidate_id=candidate.id,
+                event_type="candidate_created",
+                description="Candidate record created from resume upload.",
+            )
         record_audit(
             self.db,
             candidate_id=candidate.id,
-            application_id=application.id,
-            event_type="resume_analyzed",
-            description=f"Resume analyzed against {job.title}.",
-            metadata={"overall_score": result.overall_score},
+            event_type="resume_uploaded",
+            description=f"Resume uploaded to talent pool: {safe_name}.",
+            metadata={"resume_id": str(resume.id), "filename": safe_name},
         )
         self.db.commit()
         self.db.refresh(candidate)
-        self.db.refresh(analysis)
-        return candidate, analysis
+        return candidate
+
+    def upload_talent_resumes_batch(
+        self, files: list[tuple[str, str, bytes]]
+    ) -> BatchResumeUploadResult:
+        results: list[BatchResumeItemResult] = []
+        success = failure = duplicate = 0
+        for filename, mime_type, content in files:
+            try:
+                candidate = self.upload_talent_resume(filename, mime_type, content)
+                results.append(
+                    BatchResumeItemResult(
+                        filename=filename,
+                        status="success",
+                        candidate=candidate,
+                    )
+                )
+                success += 1
+            except ConflictError as exc:
+                duplicate += 1
+                results.append(
+                    BatchResumeItemResult(
+                        filename=filename,
+                        status="duplicate",
+                        message=str(exc),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                failure += 1
+                results.append(
+                    BatchResumeItemResult(
+                        filename=filename,
+                        status="failed",
+                        message=str(exc),
+                    )
+                )
+        return BatchResumeUploadResult(
+            job_id=None,
+            results=results,
+            success_count=success,
+            failure_count=failure,
+            duplicate_count=duplicate,
+        )
 
     def upload_resumes_batch(
         self, job_id: uuid.UUID, files: list[tuple[str, str, bytes]]
@@ -673,8 +767,141 @@ class CandidateService:
     def list_for_job(self, job_id: uuid.UUID, **filters) -> Page:
         return self.list_candidates(job_id=job_id, **filters)
 
+    def _latest_resume(self, candidate_id: uuid.UUID) -> Resume | None:
+        return self.db.scalar(
+            select(Resume)
+            .where(Resume.candidate_id == candidate_id)
+            .order_by(Resume.created_at.desc())
+            .limit(1)
+        )
+
+    def _ensure_application(self, job_id: uuid.UUID, candidate_id: uuid.UUID) -> Application:
+        application = self.db.scalar(
+            select(Application).where(
+                Application.job_id == job_id,
+                Application.candidate_id == candidate_id,
+            )
+        )
+        if application:
+            return application
+        resume = self._latest_resume(candidate_id)
+        if not resume:
+            raise ValueError("Candidate does not have a resume in the talent pool.")
+        application = Application(
+            job_id=job_id,
+            candidate_id=candidate_id,
+            resume_id=resume.id,
+            status="new",
+        )
+        self.db.add(application)
+        self.db.flush()
+        record_audit(
+            self.db,
+            candidate_id=candidate_id,
+            application_id=application.id,
+            event_type="application_created",
+            description="Candidate linked to job for screening.",
+            metadata={"job_id": str(job_id), "resume_id": str(resume.id)},
+        )
+        return application
+
+    def _list_talent_pool(self, **filters) -> Page:
+        search = (filters.get("search") or "").strip().lower()
+        stmt = (
+            select(Candidate)
+            .join(Resume, Resume.candidate_id == Candidate.id)
+            .order_by(Candidate.full_name.asc())
+        )
+        if search:
+            term = f"%{search}%"
+            job_title_match = (
+                select(Application.id)
+                .join(Job, Job.id == Application.job_id)
+                .where(
+                    Application.candidate_id == Candidate.id,
+                    func.lower(Job.title).like(term),
+                )
+                .exists()
+            )
+            stmt = stmt.where(
+                or_(
+                    func.lower(Candidate.full_name).like(term),
+                    func.lower(Candidate.email).like(term),
+                    func.lower(func.coalesce(Candidate.phone, "")).like(term),
+                    job_title_match,
+                )
+            )
+        candidates = list(self.db.scalars(stmt).unique().all())
+        unique: list[Candidate] = []
+        seen: set[uuid.UUID] = set()
+        for candidate in candidates:
+            if candidate.id in seen:
+                continue
+            if not self._latest_resume(candidate.id):
+                continue
+            seen.add(candidate.id)
+            unique.append(candidate)
+        total = len(unique)
+        page = filters["page"]
+        page_size = filters["page_size"]
+        start = (page - 1) * page_size
+        page_items = unique[start : start + page_size]
+        items: list[CandidateListItem] = []
+        for candidate in page_items:
+            resume = self._latest_resume(candidate.id)
+            if not resume:
+                continue
+            latest_application = self.db.execute(
+                select(Application, Job)
+                .join(Job, Job.id == Application.job_id)
+                .where(Application.candidate_id == candidate.id)
+                .order_by(Application.created_at.desc())
+                .limit(1)
+            ).first()
+            job_id = None
+            job_title = "Talent pool"
+            application_status = "talent_pool"
+            applied_at = resume.created_at
+            if latest_application:
+                application, job = latest_application
+                job_id = job.id
+                job_title = job.title
+                application_status = application.status
+                applied_at = application.created_at
+            items.append(
+                CandidateListItem(
+                    id=candidate.id,
+                    full_name=candidate.full_name,
+                    email=candidate.email,
+                    phone=candidate.phone,
+                    profile=candidate.profile,
+                    created_at=candidate.created_at,
+                    application_status=application_status,
+                    jd_score=None,
+                    fit_reason="",
+                    job_id=job_id,
+                    job_title=job_title,
+                    skills=list(candidate.profile.get("skills", [])),
+                    screening_status="Not Screened",
+                    current_stage="Resume Review",
+                    applied_at=applied_at,
+                    decision_status="pending",
+                    email_status="Not Sent",
+                )
+            )
+        return Page(
+            items=items,
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_uploaded=total,
+            shortlisted_threshold=SHORTLIST_MIN_SCORE,
+        )
+
     def list_candidates(self, job_id: uuid.UUID | None = None, **filters) -> Page:
-        if job_id is not None and not self.jobs.get(job_id):
+        if job_id is None:
+            return self._list_talent_pool(**filters)
+        if not self.jobs.get(job_id):
             raise NotFoundError("Job not found")
         # Optional score filter only; default listing shows all scored candidates.
         requested_min = filters.get("min_score")
@@ -762,7 +989,7 @@ class CandidateService:
                     application_status=status,
                     jd_score=jd_score,
                     hr_score=hr_score,
-                    fit_reason=explanation,
+                    fit_reason=explanation or "",
                     fit_points=fit_points,
                     gap_points=gap_points,
                     job_id=candidate_job_id,
@@ -811,14 +1038,25 @@ class CandidateService:
             )
             job.embedding = job_vector
             self.db.commit()
+        latest_resume = (
+            select(
+                Resume.candidate_id,
+                func.max(Resume.created_at).label("latest_at"),
+            )
+            .group_by(Resume.candidate_id)
+            .subquery()
+        )
         rows = self.db.execute(
-            select(Application, Candidate, Resume)
-            .join(Candidate, Candidate.id == Application.candidate_id)
-            .join(Resume, Resume.id == Application.resume_id)
-            .where(Application.job_id == job_id)
+            select(Candidate, Resume)
+            .join(Resume, Resume.candidate_id == Candidate.id)
+            .join(
+                latest_resume,
+                (Resume.candidate_id == latest_resume.c.candidate_id)
+                & (Resume.created_at == latest_resume.c.latest_at),
+            )
         ).all()
         ranked: list[tuple[float, Candidate, int | None, list[str]]] = []
-        for _application, candidate, resume in rows:
+        for candidate, resume in rows:
             parsed = ParsedResume.model_validate(resume.parsed_data)
             resume_text = "\n".join(
                 part
@@ -868,15 +1106,13 @@ class CandidateService:
         )
         if candidate_ids is not None:
             allowed = set(candidate_ids)
-            applications = [
-                application
-                for application in applications
-                if application.candidate_id in allowed
-            ]
+            if len(allowed) > 50:
+                raise ValueError("Select at most fifty candidates to generate scores.")
+            applications = []
+            for candidate_id in allowed:
+                applications.append(self._ensure_application(job_id, candidate_id))
             if not applications:
                 raise ValueError("No matching candidates found for this job.")
-            if len(applications) > 50:
-                raise ValueError("Select at most fifty candidates to generate scores.")
         analyzed = 0
         shortlisted = 0
         below = 0
@@ -930,6 +1166,14 @@ class CandidateService:
                     )
                 )
             analyzed += 1
+            record_audit(
+                self.db,
+                candidate_id=application.candidate_id,
+                application_id=application.id,
+                event_type="resume_analyzed",
+                description=f"Resume analyzed against {job.title}.",
+                metadata={"overall_score": result.overall_score},
+            )
             if result.overall_score >= SHORTLIST_MIN_SCORE:
                 shortlisted += 1
             else:

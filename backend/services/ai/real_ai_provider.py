@@ -315,8 +315,6 @@ class RealAIProvider(AIProvider):
             f"Certifications: {requirements.certifications}\n"
             f"Matched skills: {scored.matched_skills}\n"
             f"Missing skills: {scored.missing_skills}\n"
-            f"Transparent fit points: {scored.fit_points}\n"
-            f"Transparent gap points: {scored.gap_points}\n"
             f"Required skill score: {scored.required_skill_score}\n"
             f"Preferred skill score: {scored.preferred_skill_score}\n"
             f"Experience score: {scored.categories['experience'].score}\n"
@@ -338,16 +336,16 @@ class RealAIProvider(AIProvider):
             )
             fit_points = [
                 point.strip()
-                for point in (narrative.fit_points or scored.fit_points)
+                for point in (narrative.fit_points or [])
                 if point and point.strip()
-            ][:8] or scored.fit_points
+            ][:8]
             gap_points = [
                 point.strip()
                 for point in (narrative.gap_points or [])
                 if point and point.strip()
             ][:8]
-            if not gap_points:
-                gap_points = scored.gap_points
+            if not fit_points and not gap_points:
+                raise AIProviderError("AI did not return fit or gap points.")
             explanation_parts = []
             if fit_points:
                 explanation_parts.append("Fits: " + "; ".join(fit_points))

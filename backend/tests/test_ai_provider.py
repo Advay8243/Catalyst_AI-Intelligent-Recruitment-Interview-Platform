@@ -162,6 +162,13 @@ def test_match_keeps_transparent_scores_and_enriches_explanation():
     def handler(request: httpx.Request) -> httpx.Response:
         return _chat_response(
             {
+                "fit_points": [
+                    "Python and FastAPI appear in the resume and match required skills.",
+                    "Six years of experience exceeds the four-year requirement.",
+                ],
+                "gap_points": [
+                    "PostgreSQL depth should be validated in HR screening.",
+                ],
                 "why_candidate_fits": (
                     "Candidate lists Python and FastAPI which match required skills, "
                     "with six years of backend experience against a four-year requirement."

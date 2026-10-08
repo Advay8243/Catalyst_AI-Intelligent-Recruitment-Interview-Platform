@@ -319,6 +319,60 @@ async def upload_resumes_batch(
     )
 
 
+@router.post("/candidates/resume", response_model=ResumeUploadResult, status_code=201)
+async def upload_talent_resume(
+    request: Request,
+    db: Session = Depends(get_db),
+    ai: AIProvider = Depends(get_ai_provider),
+    storage: FileStorage = Depends(get_file_storage),
+    settings: Settings = Depends(get_settings),
+):
+    form = await request.form()
+    uploaded = form.get("file")
+    if not isinstance(uploaded, StarletteUploadFile):
+        raise ValueError("A multipart file field named 'file' is required")
+    content = await uploaded.read()
+    filename = uploaded.filename or ""
+    candidate = CandidateService(db, ai, storage, settings).upload_talent_resume(
+        filename,
+        uploaded.content_type or "application/octet-stream",
+        content,
+    )
+    return ResumeUploadResult(
+        candidate=candidate,
+        analysis=None,
+        status="success",
+        filename=filename,
+    )
+
+
+@router.post(
+    "/candidates/resumes/batch",
+    response_model=BatchResumeUploadResult,
+    status_code=201,
+)
+async def upload_talent_resumes_batch(
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    ai: AIProvider = Depends(get_ai_provider),
+    storage: FileStorage = Depends(get_file_storage),
+    settings: Settings = Depends(get_settings),
+):
+    payload: list[tuple[str, str, bytes]] = []
+    for uploaded in files:
+        content = await uploaded.read()
+        payload.append(
+            (
+                uploaded.filename or "resume.pdf",
+                uploaded.content_type or "application/octet-stream",
+                content,
+            )
+        )
+    return CandidateService(db, ai, storage, settings).upload_talent_resumes_batch(
+        payload
+    )
+
+
 @router.get("/dashboard/stats", response_model=DashboardStats)
 def dashboard_stats(
     job_id: uuid.UUID | None = None,

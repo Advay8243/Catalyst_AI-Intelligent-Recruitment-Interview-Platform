@@ -27,20 +27,7 @@ const baseSession = {
     jd_resume_score: 87,
     key_matched_skills: ["Python", "PostgreSQL"],
   },
-  questions: [
-    {
-      id: "q1",
-      text: "Describe your AWS production experience.",
-      category: "skills",
-      reason: "JD requires AWS; resume provides weak evidence.",
-      focus_skills: ["AWS"],
-    },
-    {
-      id: "q2",
-      text: "Please summarize your relevant experience.",
-      category: "experience",
-    },
-  ],
+  questions: [],
   transcript: [],
   created_at: "2026-01-01T00:00:00Z",
   transcript_source: "none",
@@ -60,6 +47,20 @@ describe("HRScreeningCallPage", () => {
     push.mockReset();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("/generate-questions") && init?.method === "POST") {
+        return json({
+          ...baseSession,
+          questions: [
+            {
+              id: "q1",
+              text: "Describe your AWS production experience.",
+              category: "skills",
+              reason: "JD requires AWS; resume provides weak evidence.",
+              focus_skills: ["AWS"],
+            },
+          ],
+        });
+      }
       if (url.endsWith("/start")) {
         return json({
           ...baseSession,
@@ -124,11 +125,15 @@ describe("HRScreeningCallPage", () => {
     expect(await screen.findByText("Jordan Rivera")).toBeInTheDocument();
     expect(screen.getByText("Real-time transcription unavailable")).toBeInTheDocument();
     expect(screen.getByText("AI-generated questions")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate ai questions/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /generate ai questions/i }));
+    await act(() => vi.advanceTimersByTimeAsync(3300));
+    expect(await screen.findByText(/Describe your AWS production experience/i)).toBeInTheDocument();
     expect(screen.queryByText(/candidate speaking/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/hr speaking/i)).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Live transcript discussion" })).toHaveClass("overflow-y-auto");
 
-    await user.click(screen.getByRole("button", { name: /paste existing transcript/i }));
+    await user.click(screen.getByRole("button", { name: /paste transcript/i }));
     expect(screen.getByLabelText("Pasted transcript")).toHaveClass("overflow-y-auto", "resize-none");
     await user.type(
       screen.getByLabelText("Pasted transcript"),
