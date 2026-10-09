@@ -72,6 +72,7 @@ class MockAIProvider(AIProvider):
         missing_skills: list[str],
         min_questions: int,
         max_questions: int,
+        exclude_texts: list[str] | None = None,
     ) -> list[ScreeningQuestion]:
         return self.question_generator.generate(
             requirements,
@@ -80,6 +81,7 @@ class MockAIProvider(AIProvider):
             missing_skills=missing_skills,
             min_questions=min_questions,
             max_questions=max_questions,
+            exclude_texts=exclude_texts,
         )
 
     def analyze_hr_screening(

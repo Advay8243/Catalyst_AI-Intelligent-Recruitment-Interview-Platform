@@ -50,6 +50,7 @@ class AIProvider(ABC):
         missing_skills: list[str],
         min_questions: int,
         max_questions: int,
+        exclude_texts: list[str] | None = None,
     ) -> list[ScreeningQuestion]:
         raise NotImplementedError
 

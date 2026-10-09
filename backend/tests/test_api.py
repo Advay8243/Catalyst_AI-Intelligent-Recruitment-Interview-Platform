@@ -811,6 +811,11 @@ def test_talent_pool_upload_match_and_score(client):
     assert item["jd_score"] is not None
     assert item["fit_points"]
     assert not str(item["fit_points"][0]).startswith("Required skills evidenced:")
+    remaining = client.get(f"/jobs/{job['id']}/candidates/top")
+    assert remaining.status_code == 200
+    assert all(
+        item["candidate_id"] != candidate_id for item in remaining.json()["items"]
+    )
 
 
 def test_shortlist_threshold_and_generate_scores(client):

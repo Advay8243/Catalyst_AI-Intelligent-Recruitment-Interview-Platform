@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from pydantic import BaseModel, EmailStr, Field
 
 from backend.config import Settings
@@ -137,20 +139,25 @@ class RealAIProvider(AIProvider):
         missing_skills: list[str],
         min_questions: int,
         max_questions: int,
+        exclude_texts: list[str] | None = None,
     ) -> list[ScreeningQuestion]:
-        """LLM-adaptive questions with deterministic fallback."""
+        """LLM-adaptive questions. Each call asks for a new set."""
+        previous = [text.strip() for text in (exclude_texts or []) if text.strip()]
+        avoided = "\n".join(f"- {text}" for text in previous[:20])
         system = (
             "You generate HR screening questions as JSON only. "
             "Focus on JD requirements and candidate skill gaps. "
-            "Do not ask repetitive questions. "
+            "Every request must produce a new set of questions. "
+            "Do not repeat or lightly rephrase earlier questions. "
             f"{PROTECTED_CHARACTERISTICS_RULE}"
         )
         user = (
-            f"Generate between {min_questions} and {max_questions} screening questions. "
+            f"Generate between {min_questions} and {max_questions} screening questions now. "
             "Return JSON: {\"questions\": [{\"text\": str, \"category\": "
             "experience|skills|motivation|communication|availability, "
             "\"reason\": str, \"focus_skills\": [str]}]}. "
-            "Prioritize missing/weak skills over already-strong matched skills.\n\n"
+            "Prioritize missing/weak skills over already-strong matched skills. "
+            "Vary the scenario, metric, or decision each question asks about.\n\n"
             f"JD title: {requirements.title}\n"
             f"Required skills: {requirements.required_skills}\n"
             f"Preferred skills: {requirements.preferred_skills}\n"
@@ -160,6 +167,11 @@ class RealAIProvider(AIProvider):
             f"Missing/weak skills: {missing_skills}\n"
             f"Candidate skills: {resume.skills}\n"
             f"Candidate highlights: {resume.highlights[:8]}\n"
+            + (
+                "Do not reuse these earlier questions:\n" + avoided + "\n"
+                if avoided
+                else ""
+            )
         )
         try:
             raw = self.client.complete_json(
@@ -167,6 +179,7 @@ class RealAIProvider(AIProvider):
                 system_prompt=system,
                 user_prompt=user,
                 schema=LLMGeneratedQuestions,
+                temperature=0.9,
             )
             allowed = {
                 "experience",
@@ -175,20 +188,27 @@ class RealAIProvider(AIProvider):
                 "communication",
                 "availability",
             }
+            blocked = {text.casefold() for text in previous}
             questions: list[ScreeningQuestion] = []
-            for index, item in enumerate(raw.questions[:max_questions]):
+            for item in raw.questions:
+                text = item.text.strip()
+                if not text or text.casefold() in blocked:
+                    continue
                 category = item.category.strip().lower()
                 if category not in allowed:
                     category = "skills"
                 questions.append(
                     ScreeningQuestion(
-                        id=f"q-llm-{index + 1}",
-                        text=item.text.strip(),
+                        id=f"q-{uuid.uuid4().hex[:10]}",
+                        text=text,
                         category=category,  # type: ignore[arg-type]
                         reason=item.reason or "JD/candidate adaptive screening question.",
                         focus_skills=item.focus_skills,
                     )
                 )
+                blocked.add(text.casefold())
+                if len(questions) >= max_questions:
+                    break
             if len(questions) >= min_questions:
                 return questions
         except AIProviderError:
@@ -200,6 +220,7 @@ class RealAIProvider(AIProvider):
             missing_skills=missing_skills,
             min_questions=min_questions,
             max_questions=max_questions,
+            exclude_texts=previous,
         )
 
     def parse_job_description(

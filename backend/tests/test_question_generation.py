@@ -47,6 +47,44 @@ def test_adaptive_questions_focus_on_skill_gaps():
     assert all(question.reason for question in questions)
 
 
+def test_repeated_generation_changes_the_questions():
+    requirements = JDRequirements(
+        title="Data Engineer",
+        required_skills=["Python", "Spark", "AWS", "Kafka"],
+        preferred_skills=["Airflow"],
+        responsibilities=["Build production data pipelines"],
+        minimum_years_experience=4,
+    )
+    resume = ParsedResume(
+        full_name="Alex",
+        email="alex@example.com",
+        skills=["Python", "Spark"],
+    )
+    generator = ScreeningQuestionGenerator()
+    kwargs = dict(
+        matched_skills=["Python", "Spark"],
+        missing_skills=["AWS", "Kafka"],
+        min_questions=8,
+        max_questions=15,
+    )
+    first = generator.generate(requirements, resume, **kwargs)
+    second = generator.generate(
+        requirements,
+        resume,
+        exclude_texts=[question.text for question in first],
+        **kwargs,
+    )
+    assert [question.text for question in first] != [question.text for question in second]
+    assert {question.text.casefold() for question in first}.isdisjoint(
+        {question.text.casefold() for question in second}
+    )
+    batches = {
+        tuple(question.text for question in generator.generate(requirements, resume, **kwargs))
+        for _ in range(6)
+    }
+    assert len(batches) > 1
+
+
 def test_mock_ai_generate_screening_questions_and_embedding():
     provider = MockAIProvider()
     requirements = JDRequirements(

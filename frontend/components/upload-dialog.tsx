@@ -72,6 +72,14 @@ export function UploadDialog({
   });
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const resetUpload = () => {
+    setFiles([]);
+    setFileStatuses([]);
+    setStage("");
+    setProgress(0);
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
   const applyExtracted = (extracted: JobRequirements, text: string) => {
     setDescription(text);
     setForm({
@@ -161,15 +169,6 @@ export function UploadDialog({
       const result = jobId
         ? await uploadResumesBatch(jobId, files, setProgress)
         : await uploadTalentResumesBatch(files, setProgress);
-      setFileStatuses(
-        result.results.map((item) => ({
-          name: item.filename,
-          status: item.status,
-          message: item.message,
-        })),
-      );
-      setProgress(100);
-      setStage("Batch processing complete");
       const parts = [
         `${result.success_count} succeeded`,
         result.duplicate_count ? `${result.duplicate_count} duplicate` : "",
@@ -177,7 +176,8 @@ export function UploadDialog({
       ].filter(Boolean);
       onNotice(parts.join(" · "), result.failure_count > 0 && result.success_count === 0);
       if (result.success_count > 0) onComplete();
-      if (result.failure_count === 0) setTimeout(() => onOpenChange(false), 500);
+      resetUpload();
+      if (result.failure_count === 0) onOpenChange(false);
     } catch (error) {
       onNotice(error instanceof Error ? error.message : "Upload failed", true);
       setStage("");
@@ -187,7 +187,11 @@ export function UploadDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !uploading && onOpenChange(next)}>
+    <Dialog open={open} onOpenChange={(next) => {
+      if (uploading) return;
+      if (!next) resetUpload();
+      onOpenChange(next);
+    }}>
       <DialogContent
         title={kind === "resume" ? "Upload resumes" : "Add job description"}
         description={
@@ -272,7 +276,7 @@ export function UploadDialog({
               Parse & review
             </Button>
           ) : (
-            <Button disabled={uploading || !jobId || !files.length} onClick={() => void uploadResumes()}>
+            <Button disabled={uploading || !files.length} onClick={() => void uploadResumes()}>
               {uploading ? <LoaderCircle className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
               Upload & analyze
             </Button>

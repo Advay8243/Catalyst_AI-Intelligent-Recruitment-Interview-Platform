@@ -67,4 +67,34 @@ describe("UploadDialog", () => {
       expect(onComplete).toHaveBeenCalled();
     });
   });
+
+  it("enables talent-pool resume upload without a selected job", async () => {
+    const user = userEvent.setup();
+    render(
+      <UploadDialog
+        kind="resume"
+        open
+        onOpenChange={vi.fn()}
+        onComplete={vi.fn()}
+        onNotice={vi.fn()}
+      />,
+    );
+
+    const file = new File(["resume"], "alex.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    const submit = screen.getByRole("button", { name: /Upload & analyze/i });
+    expect(submit).toBeDisabled();
+    await user.upload(screen.getByLabelText("Resume files"), file);
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+
+    await waitFor(() => {
+      const instance = vi.mocked(XMLHttpRequest).mock.results[0].value as MockXHR;
+      expect(instance.open).toHaveBeenCalledWith(
+        "POST",
+        expect.stringContaining("/candidates/resumes/batch"),
+      );
+    });
+  });
 });

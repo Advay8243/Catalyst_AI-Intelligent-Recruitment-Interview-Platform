@@ -1055,8 +1055,15 @@ class CandidateService:
                 & (Resume.created_at == latest_resume.c.latest_at),
             )
         ).all()
+        scored_resume_ids = set(
+            self.db.scalars(
+                select(ResumeAnalysis.resume_id).where(ResumeAnalysis.job_id == job_id)
+            )
+        )
         ranked: list[tuple[float, Candidate, int | None, list[str]]] = []
         for candidate, resume in rows:
+            if resume.id in scored_resume_ids:
+                continue
             parsed = ParsedResume.model_validate(resume.parsed_data)
             resume_text = "\n".join(
                 part

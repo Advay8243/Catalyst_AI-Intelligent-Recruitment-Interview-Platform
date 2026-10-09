@@ -46,6 +46,7 @@ class OpenAICompatibleClient:
         system_prompt: str,
         user_prompt: str,
         schema: type[T],
+        temperature: float = 0,
     ) -> T:
         last_error: AIProviderError | None = None
         attempts = max(1, self.settings.ai_max_retries + 1)
@@ -58,7 +59,7 @@ class OpenAICompatibleClient:
                 ):
                     payload = {
                         "model": self.settings.ai_model,
-                        "temperature": 0,
+                        "temperature": temperature,
                         "response_format": {"type": "json_object"},
                         "messages": [
                             {"role": "system", "content": system_prompt},

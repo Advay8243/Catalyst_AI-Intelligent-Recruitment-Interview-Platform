@@ -260,6 +260,11 @@ export function ScreeningClient() {
         await new Promise((resolve) => setTimeout(resolve, RESUME_ANALYZE_MS));
         const result = await generateJobScores(jobId, [candidateId]);
         analyzedCount += result.analyzed_count;
+        if (result.analyzed_count > 0) {
+          setTopCandidates((current) => current.filter(
+            (item) => item.candidate_id !== candidateId,
+          ));
+        }
       }
       setAnalyzeProgress(100);
       setAnalyzeMessage("Analysis complete.");

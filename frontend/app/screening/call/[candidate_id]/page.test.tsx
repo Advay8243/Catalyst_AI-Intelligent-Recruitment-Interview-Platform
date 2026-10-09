@@ -132,8 +132,7 @@ describe("HRScreeningCallPage", () => {
     expect(screen.queryByText(/candidate speaking/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/hr speaking/i)).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Live transcript discussion" })).toHaveClass("overflow-y-auto");
-
-    await user.click(screen.getByRole("button", { name: /paste transcript/i }));
+    expect(screen.queryByRole("button", { name: /paste transcript/i })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Pasted transcript")).toHaveClass("overflow-y-auto", "resize-none");
     await user.type(
       screen.getByLabelText("Pasted transcript"),

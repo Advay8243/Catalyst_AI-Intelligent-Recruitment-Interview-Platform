@@ -5,7 +5,6 @@ import {
   BriefcaseBusiness,
   CheckCircle2,
   CircleDot,
-  ClipboardPaste,
   Loader2,
   Mail,
   MessageSquareText,
@@ -61,7 +60,6 @@ export default function HRScreeningCallPage() {
   const [analysis, setAnalysis] = useState<ScreeningAnalysis | null>(null);
   const [transcriptView, setTranscriptView] = useState<"live" | "pasted">("live");
   const [pasteText, setPasteText] = useState("");
-  const [showPaste, setShowPaste] = useState(false);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState("");
   const [analysisProgress, setAnalysisProgress] = useState(0);
@@ -130,7 +128,6 @@ export default function HRScreeningCallPage() {
       setQuestionProgress(Math.min(92, Math.round((elapsed / QUESTION_GENERATE_MS) * 100)));
     }, 120);
     try {
-      await new Promise((resolve) => setTimeout(resolve, QUESTION_GENERATE_MS));
       const next = await generateCallQuestions(session.id);
       setSession(next);
       setQuestionProgress(100);
@@ -168,7 +165,6 @@ export default function HRScreeningCallPage() {
       const pasted = await pasteTranscript(session.id, pasteText.trim());
       setTranscriptView("pasted");
       setSession(pasted.session);
-      setShowPaste(false);
       setAction("complete");
       const [result] = await Promise.all([
         completeCall(session.id),
@@ -305,17 +301,6 @@ export default function HRScreeningCallPage() {
                 <CheckCircle2 className="size-4" /> Screening completed
               </div>
             ) : null}
-
-            {session.status !== "completed" && (
-              <Button
-                className="mt-3 w-full"
-                variant="secondary"
-                onClick={() => setShowPaste((value) => !value)}
-              >
-                <ClipboardPaste className="size-4" />
-                Paste Transcript
-              </Button>
-            )}
           </section>
         </aside>
 
@@ -349,7 +334,7 @@ export default function HRScreeningCallPage() {
                     <p className="font-semibold">Real-time transcription unavailable</p>
                     <p className="mt-1 text-xs leading-5">
                       The configured call provider does not stream live speech-to-text.
-                      Use <strong>Paste Transcript</strong> to analyze a screening conversation.
+                      Paste the screening conversation below to analyze it.
                     </p>
                   </div>
                 </div>
@@ -367,7 +352,7 @@ export default function HRScreeningCallPage() {
             {session.transcript.map((entry) => <TranscriptBubble key={entry.id} entry={entry} />)}
           </div>
 
-          {showPaste && session.status !== "completed" && (
+          {session.status !== "completed" && (
             <div className="shrink-0 border-t bg-[#fcfcfd] p-4">
               <label htmlFor="pasted-transcript" className="mb-2 block text-xs font-semibold uppercase tracking-wide text-[#667085]">
                 Transcript
@@ -403,7 +388,7 @@ export default function HRScreeningCallPage() {
             <section className="rounded-xl border bg-white p-5 shadow-panel">
               <h2 className="font-semibold">AI-generated questions</h2>
               <p className="mt-1 text-xs leading-5 text-[#667085]">
-                Generate adaptive questions from this JD and the candidate resume.
+                Each click generates a new set from this JD and the candidate resume.
               </p>
               <Button
                 className="mt-4 w-full"

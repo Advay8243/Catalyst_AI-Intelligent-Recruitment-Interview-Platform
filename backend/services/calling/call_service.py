@@ -75,7 +75,12 @@ class CallService:
         application = self.db.get(Application, session.application_id)
         if not application:
             raise NotFoundError("Application not found")
-        questions = self._generate_questions(application)
+        previous = [
+            str(item.get("text") or "")
+            for item in (session.questions or [])
+            if isinstance(item, dict)
+        ]
+        questions = self._generate_questions(application, exclude_texts=previous)
         session.questions = [question.model_dump(mode="json") for question in questions]
         self.db.commit()
         self.db.refresh(session)
@@ -256,7 +261,11 @@ class CallService:
             session=self._read(session), analysis=self._analysis_read(analysis)
         )
 
-    def _generate_questions(self, application: Application) -> list[ScreeningQuestion]:
+    def _generate_questions(
+        self,
+        application: Application,
+        exclude_texts: list[str] | None = None,
+    ) -> list[ScreeningQuestion]:
         job = self.db.get(Job, application.job_id)
         resume = self.db.get(Resume, application.resume_id)
         if not job or not resume or not job.requirements:
@@ -267,6 +276,7 @@ class CallService:
                 missing_skills=[],
                 min_questions=self.settings.screening_min_questions,
                 max_questions=self.settings.screening_max_questions,
+                exclude_texts=exclude_texts,
             )
         requirements = JDRequirements.model_validate(job.requirements.structured_data)
         parsed = ParsedResume.model_validate(resume.parsed_data)
@@ -299,6 +309,7 @@ class CallService:
                 missing_skills=missing,
                 min_questions=self.settings.screening_min_questions,
                 max_questions=self.settings.screening_max_questions,
+                exclude_texts=exclude_texts,
             )
         except Exception:
             return self.question_fallback.generate(
@@ -308,6 +319,7 @@ class CallService:
                 missing_skills=missing,
                 min_questions=self.settings.screening_min_questions,
                 max_questions=self.settings.screening_max_questions,
+                exclude_texts=exclude_texts,
             )
 
     def _append_entry(

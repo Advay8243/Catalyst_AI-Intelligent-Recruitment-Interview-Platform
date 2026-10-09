@@ -137,6 +137,8 @@ describe("ScreeningClient", () => {
     await act(() => vi.advanceTimersByTimeAsync(4600));
     expect(await screen.findByText("Candidates")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "AI Calculated Score for Maya Chen" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select Maya Chen" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select Noah Singh" })).toBeInTheDocument();
     const scoreCalls = vi.mocked(fetch).mock.calls.filter(
       ([url, init]) => String(url).includes("/generate-scores") && init?.method === "POST",
     );
