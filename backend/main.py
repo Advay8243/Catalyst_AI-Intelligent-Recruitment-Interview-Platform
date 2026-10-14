@@ -1,11 +1,12 @@
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.api import router
 from backend.calling_api import router as calling_router
-from backend.config import get_settings
+from backend.config import Settings, get_settings
 from backend.review_api import router as review_router
+from backend.services.ai.gemini_provider import provider_status
 from backend.services.ai.errors import AIProviderError
 from backend.services.core import ConflictError, NotFoundError
 
@@ -52,6 +53,11 @@ async def ai_provider_error_handler(_: Request, exc: AIProviderError) -> JSONRes
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ai/status")
+def ai_status(settings: Settings = Depends(get_settings)) -> dict[str, object]:
+    return provider_status(settings)
 
 
 app.include_router(router)

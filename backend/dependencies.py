@@ -1,8 +1,12 @@
 from functools import lru_cache
 
+from fastapi import Depends
+
 from backend.config import Settings, get_settings
 from backend.services.ai.ai_provider import AIProvider
 from backend.services.ai.errors import AIProviderError
+from backend.services.ai.gemini_provider import GeminiAIProvider
+from backend.services.ai.groq_provider import GroqAIProvider
 from backend.services.ai.mock_ai_provider import MockAIProvider
 from backend.services.ai.real_ai_provider import RealAIProvider
 from backend.services.calling.call_provider import CallProvider
@@ -20,16 +24,19 @@ def create_ai_provider(settings: Settings | None = None) -> AIProvider:
         return MockAIProvider()
     if provider == "openai":
         return RealAIProvider(resolved)
+    if provider == "gemini":
+        return GeminiAIProvider(resolved)
+    if provider == "groq":
+        return GroqAIProvider(resolved)
     raise AIProviderError(
-        f"Unsupported AI_PROVIDER '{provider}'. Use 'mock' or 'openai'.",
+        f"Unsupported AI_PROVIDER '{provider}'. Use 'mock', 'groq', 'gemini', or 'openai'.",
         operation="provider_selection",
         retryable=False,
     )
 
 
-@lru_cache
-def get_ai_provider() -> AIProvider:
-    return create_ai_provider()
+def get_ai_provider(settings: Settings = Depends(get_settings)) -> AIProvider:
+    return create_ai_provider(settings)
 
 
 @lru_cache

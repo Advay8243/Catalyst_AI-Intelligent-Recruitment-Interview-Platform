@@ -2,7 +2,7 @@
 
 Catalyst AI is a recruitment operations application. This first module covers job-description ingestion, PDF/DOCX resume ingestion, transparent JD-to-resume matching, unified candidate screening, HR-call navigation, and an email-composer shell. Online assessments, real calling/email delivery, and technical interviews are intentionally out of scope.
 
-The application runs without external AI credentials by using a deterministic `MockAIProvider`.
+The application runs without external AI credentials by using a deterministic `MockAIProvider`. Set `AI_PROVIDER=groq` with a backend `GROQ_API_KEY` to use Groq for parsing, fit explanations, interview questions, and transcript analysis. Resume scores stay on the weighted formula. Groq does not provide embeddings, so semantic search uses local hash vectors.
 
 The HR screening module provides a full mock-provider workflow at
 `/screening/call/{candidate_id}`: call lifecycle, live transcript capture,
@@ -50,8 +50,13 @@ cp frontend/.env.example frontend/.env.local
 The main variables are:
 
 - `DATABASE_URL`: SQLAlchemy PostgreSQL URL. Never commit credentials.
-- `AI_PROVIDER`: use `mock` for this module.
-- `AI_API_KEY`: reserved for a future provider; leave empty with the mock.
+- `AI_PROVIDER`: `mock`, `groq`, `gemini`, or `openai`. `mock` makes no external AI calls.
+- `GROQ_API_KEY` and `GROQ_MODEL`: backend-only Groq settings. Leave the key empty in mock mode.
+- `GEMINI_API_KEY`: backend-only Gemini key. Leave empty in mock mode. Never put this in frontend env vars or source code.
+- `GEMINI_MODEL`: text model, default `gemini-2.5-flash`. Use a model enabled on your account.
+- `GEMINI_EMBEDDING_MODEL`: embedding model, default `gemini-embedding-001`.
+- `AI_API_KEY`: used only when `AI_PROVIDER=openai`.
+- `AI_TIMEOUT_SECONDS` and `AI_MAX_RETRIES`: Gemini and OpenAI request limits.
 - `CORS_ORIGINS`: comma-separated allowed frontend origins.
 - `MAX_UPLOAD_SIZE_MB`: upload limit.
 - `UPLOAD_DIR`: local file-storage directory.
@@ -186,15 +191,36 @@ Transcript analysis excludes protected characteristics and scores only captured,
 job-relevant evidence. A real provider can replace `MockCallProvider` through
 FastAPI dependency injection.
 
-## Mock AI behavior
+## AI providers
 
-`MockAIProvider` produces structured Pydantic output using deterministic extraction and matching rules. The matcher scores required skills (40%), preferred skills (20%), experience (20%), responsibilities (15%), and education/certification (5%). These weights are configurable and validated to total 100.
+Restart the backend after changing `.env`. `GET /ai/status` reports the active provider and does not return credentials.
 
-Scoring excludes protected characteristics, including age, gender, race, religion, disability, photographs, and marital status. Explanations cite job/resume evidence instead of producing generic fit statements.
+`AI_PROVIDER=mock` uses local rules for parsing, question wording, transcript scoring, and hash-based vectors. The Candidate Screening page labels this mode as rule-based. Mock output is not labeled as Gemini output.
+
+`AI_PROVIDER=groq` calls the Groq API for resume and job extraction, fit and gap explanations, screening questions, and transcript analysis. The resume number still comes from the weighted formula. Groq has no embedding API, so search uses local 256-dimension hash vectors and reports retrieval as `local-hash`. Invalid keys, unavailable models, rate limits, and malformed responses are returned as errors and are not replaced with mock text. The default model is `openai/gpt-oss-120b`.
+
+`AI_PROVIDER=gemini` calls the Gemini API for:
+
+- Resume and job-description extraction, including skills outside the old fixed list
+- The numerical resume score, category scores, and fit or gap explanations
+- Screening questions, including why the question matters and what a good answer should show
+- Semantic transcript analysis
+- Job and resume embeddings for search
+
+In Gemini mode, the resume score and its category breakdown are model-generated and saved in the existing score fields. Mock mode still calculates that score with the weighted formula. Email and phone values are taken from the document with deterministic checks. A transcript without enough candidate evidence returns an insufficient-evidence result instead of an invented score.
+
+Gemini failures, including an invalid key, quota exhaustion, an unavailable model, or a malformed response, are returned as errors. They are not replaced with mock text. Old 256-dimension hash vectors are not compared with Gemini embeddings; the next search rebuilds a job vector in the active embedding space.
+
+Gemini availability and quota depend on the Google account and model. The default models are `gemini-2.5-flash` and `gemini-embedding-001`. If a model is not enabled for the key, set `GEMINI_MODEL` or `GEMINI_EMBEDDING_MODEL` to one that is.
+
+Calling and email delivery are still local mocks. Gemini does not place phone calls, transcribe live audio, or send email.
+
+`MockAIProvider` and the Gemini path share the same score weights: skills 40, experience 20, education 20, industry 15, and other responsibilities 5. Weights must total 100. Scoring excludes protected characteristics, including age, gender, race, religion, disability, photographs, and marital status.
 
 ## API
 
 - `POST /jobs`
+- `GET /ai/status`
 - `GET /jobs`
 - `GET /jobs/{job_id}`
 - `POST /jobs/{job_id}/resume`
@@ -219,7 +245,7 @@ Candidate listing supports `page`, `page_size`, `search`, score/status filters, 
 
 The provider interfaces are intended for:
 
-- A real LLM implementation behind `AIProvider`
+- Additional model providers behind `AIProvider`
 - S3-compatible storage behind `FileStorageProvider`
 - Telephony behind `CallProvider`
 - Transactional email behind `EmailProvider`

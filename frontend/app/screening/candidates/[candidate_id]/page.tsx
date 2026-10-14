@@ -440,7 +440,10 @@ export default function CandidateReviewPage() {
                   <Metric label="Experience alignment" score={screening.score_components.experience ?? 0} />
                   <Metric label="Skills alignment" score={screening.score_components.skills ?? 0} />
                   <Metric label="Motivation" score={screening.score_components.motivation ?? 0} />
-                  <Metric label="Availability" score={screening.score_components.availability ?? 0} />
+                  <AvailabilityNote
+                    score={typeof screening.score_components.availability === "number" ? screening.score_components.availability : null}
+                    note={typeof screening.score_components.availability_note === "string" ? screening.score_components.availability_note : null}
+                  />
                 </div>
                 <div className="mt-6 space-y-4">
                   <h3 className="font-semibold">Question and answer analysis</h3>
@@ -638,6 +641,11 @@ function ScoreCircle({ score, label }: { score: number; label: string }) {
 
 function Metric({ label, score }: { label: string; score: number }) {
   return <div><div className="mb-2 flex justify-between text-xs"><span>{label}</span><strong>{score}%</strong></div><Progress value={score} /></div>;
+}
+
+function AvailabilityNote({ score, note }: { score?: number | null; note?: string | null }) {
+  const text = note || (score == null ? "Not discussed" : `${score}%`);
+  return <div><div className="mb-2 flex justify-between text-xs"><span>Availability</span><strong>{text}</strong></div></div>;
 }
 
 function EvidenceList({ title, items, tone }: { title: string; items: string[]; tone: "green" | "amber" }) {

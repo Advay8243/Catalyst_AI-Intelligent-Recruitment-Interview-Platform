@@ -12,6 +12,7 @@ from backend.config import get_settings
 from backend.models import Application, Candidate, Job, Resume, ResumeAnalysis
 from backend.schemas import JDRequirements, ParsedResume
 from backend.services.ai.ai_provider import AIProvider
+from backend.services.ai.errors import AIProviderError
 from backend.services.audit import record_audit
 from backend.services.calling.call_provider import CallProvider
 from backend.services.calling.question_generator import ScreeningQuestionGenerator
@@ -230,6 +231,7 @@ class CallService:
                 "skills": result.skills_score,
                 "motivation": result.motivation_score,
                 "availability": result.availability_score,
+                "availability_note": result.availability_note or "Not discussed",
             },
             question_analysis=[
                 item.model_dump(mode="json") for item in result.question_analysis
@@ -311,7 +313,16 @@ class CallService:
                 max_questions=self.settings.screening_max_questions,
                 exclude_texts=exclude_texts,
             )
-        except Exception:
+        except Exception as exc:
+            if self.settings.ai_provider != "mock":
+                if isinstance(exc, AIProviderError):
+                    raise
+                raise AIProviderError(
+                    "Question generation failed.",
+                    operation="generate_screening_questions",
+                    retryable=False,
+                    cause=exc,
+                ) from exc
             return self.question_fallback.generate(
                 requirements,
                 parsed,
@@ -446,7 +457,8 @@ class CallService:
             experience_score=analysis.score_components["experience"],
             skills_score=analysis.score_components["skills"],
             motivation_score=analysis.score_components["motivation"],
-            availability_score=analysis.score_components["availability"],
+            availability_score=analysis.score_components.get("availability"),
+            availability_note=analysis.score_components.get("availability_note"),
             question_analysis=analysis.question_analysis,
             strengths=analysis.strengths,
             concerns=analysis.concerns,

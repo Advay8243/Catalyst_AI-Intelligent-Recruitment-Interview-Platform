@@ -20,11 +20,16 @@ import type {
   JobStatus,
   PaginatedCandidates,
   ScoringCriteria,
+  AiStatus,
   ScreeningAnalysis,
   TranscriptEntry,
 } from "@/lib/types";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+
+export async function getAiStatus(): Promise<AiStatus> {
+  return request<AiStatus>("/ai/status");
+}
 
 export function resumeDownloadUrl(resumeId: string) {
   return `${API_URL}/resumes/${encodeURIComponent(resumeId)}/download`;

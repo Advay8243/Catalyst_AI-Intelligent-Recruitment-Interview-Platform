@@ -21,10 +21,16 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     upload_dir: str = "storage/uploads"
     hr_api_token: str | None = None
-    ai_provider: Literal["mock", "openai"] = "mock"
+    ai_provider: Literal["mock", "openai", "gemini", "groq"] = "mock"
     ai_api_key: str | None = None
     ai_model: str = "gpt-4o-mini"
     ai_base_url: str = "https://api.openai.com/v1"
+    groq_api_key: str | None = None
+    groq_model: str = "openai/gpt-oss-120b"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_embedding_model: str = "gemini-embedding-001"
     ai_timeout_seconds: float = 30.0
     ai_max_retries: int = 2
     screening_min_questions: int = 8
@@ -49,6 +55,8 @@ class Settings(BaseSettings):
             normalized = value.strip().lower()
             if normalized in {"real", "openai-compatible"}:
                 return "openai"
+            if normalized in {"google", "google-gemini"}:
+                return "gemini"
             return normalized
         return value
 

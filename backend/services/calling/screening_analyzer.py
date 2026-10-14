@@ -62,10 +62,13 @@ class MockScreeningAnalyzer:
             if candidate_answers
             else 0
         )
-        availability_score = (
-            85
-            if re.search(r"\b(?:immediately|weeks?|months?|notice|available|start)\b", normalized)
-            else (50 if candidate_answers else 0)
+        availability_discussed = bool(
+            re.search(r"\b(?:immediately|weeks?|months?|notice|available|start)\b", normalized)
+        )
+        availability_note = (
+            "Candidate mentioned availability in the transcript."
+            if availability_discussed
+            else "Not discussed"
         )
         average_answer_words = len(words) / max(answer_count, 1)
         communication_score = (
@@ -78,7 +81,6 @@ class MockScreeningAnalyzer:
             "experience": experience_score,
             "skills": skills_score,
             "motivation": motivation_score,
-            "availability": availability_score,
             "communication": communication_score,
         }
         analyses: list[QuestionAnalysis] = []
@@ -129,11 +131,13 @@ class MockScreeningAnalyzer:
             )
 
         overall = round(
-            experience_score * 0.30
-            + skills_score * 0.30
-            + communication_score * 0.20
-            + motivation_score * 0.15
-            + availability_score * 0.05
+            (
+                experience_score * 0.30
+                + skills_score * 0.30
+                + communication_score * 0.20
+                + motivation_score * 0.15
+            )
+            / 0.95
         )
         recommendation = (
             "advance" if overall >= 75 else "review" if overall >= 55 else "do_not_advance"
@@ -155,7 +159,8 @@ class MockScreeningAnalyzer:
             experience_score=experience_score,
             skills_score=skills_score,
             motivation_score=motivation_score,
-            availability_score=availability_score,
+            availability_score=None,
+            availability_note=availability_note,
             question_analysis=analyses,
             strengths=strengths,
             concerns=concerns,

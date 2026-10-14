@@ -74,6 +74,14 @@ def score_candidates(client, job_id: str, candidate_ids: list[str]):
 
 def test_health_and_job_crud(client):
     assert client.get("/health").json() == {"status": "ok"}
+    status = client.get("/ai/status")
+    assert status.status_code == 200
+    body = status.json()
+    assert body["provider"] == "mock"
+    assert body["uses_real_ai"] is False
+    assert "api_key" not in body
+    assert "gemini_api_key" not in body
+    assert "groq_api_key" not in body
     created = create_job(client)
     assert created["requirements"]["structured_data"]["required_skills"] == [
         "python",

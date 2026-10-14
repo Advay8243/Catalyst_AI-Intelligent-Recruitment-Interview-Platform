@@ -39,6 +39,8 @@ class ParsedResume(BaseModel):
     employment_history: list[str] = Field(default_factory=list)
     industries: list[str] = Field(default_factory=list)
     highlights: list[str] = Field(default_factory=list)
+    stated_evidence: list[str] = Field(default_factory=list)
+    inferred_notes: list[str] = Field(default_factory=list)
 
 
 class ScoreCategory(BaseModel):
@@ -232,6 +234,8 @@ class JobSearchHit(BaseModel):
 class JobSearchResponse(BaseModel):
     query: str
     items: list[JobSearchHit]
+    retrieval: str = "hash-fallback"
+    note: str | None = None
 
 
 class GenerateScoresRequest(BaseModel):
