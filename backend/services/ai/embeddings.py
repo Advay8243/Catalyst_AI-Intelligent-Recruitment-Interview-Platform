@@ -28,19 +28,50 @@ def cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
 
 
 class EmbeddingService:
-    """Deterministic local embeddings for mock; OpenAI embeddings when configured."""
+    """Hash vectors for mock mode. Real providers never fall back to those vectors."""
 
-    def __init__(self, settings: Settings, http_client: httpx.Client | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        http_client: httpx.Client | None = None,
+        gemini_client: object | None = None,
+    ) -> None:
         self.settings = settings
         self._client = http_client
         self._owns_client = http_client is None
+        self._gemini_client = gemini_client
 
     def close(self) -> None:
         if self._owns_client and self._client is not None:
             self._client.close()
 
+    @property
+    def retrieval_mode(self) -> str:
+        if self.settings.ai_provider == "gemini":
+            return "gemini-embeddings"
+        if self.settings.ai_provider == "groq":
+            return "local-hash"
+        if self.settings.ai_provider == "openai" and self.settings.ai_api_key:
+            return "openai-embeddings"
+        return "hash-fallback"
+
+    def same_space(self, stored: list[float] | None, query_vector: list[float]) -> bool:
+        return bool(stored) and bool(query_vector) and len(stored) == len(query_vector)
+
     def embed_text(self, text: str) -> list[float]:
         cleaned = " ".join(text.split())
+        if self.settings.ai_provider == "gemini":
+            if not cleaned:
+                raise AIProviderError(
+                    "Cannot embed empty text.",
+                    operation="embed_text",
+                    retryable=False,
+                )
+            from backend.services.ai.gemini_client import GeminiClient
+
+            client = self._gemini_client or GeminiClient(self.settings)
+            self._gemini_client = client
+            return client.embed_text(cleaned)
         if not cleaned:
             return [0.0] * EMBEDDING_DIM
         if self.settings.ai_provider == "openai" and self.settings.ai_api_key:

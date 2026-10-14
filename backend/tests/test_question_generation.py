@@ -45,6 +45,11 @@ def test_adaptive_questions_focus_on_skill_gaps():
     if python_indexes:
         assert min(gap_indexes) < min(python_indexes)
     assert all(question.reason for question in questions)
+    hr_questions = [
+        question for question in questions
+        if question.category in {"motivation", "communication", "availability"}
+    ]
+    assert len(hr_questions) / len(questions) <= 0.15
 
 
 def test_repeated_generation_changes_the_questions():

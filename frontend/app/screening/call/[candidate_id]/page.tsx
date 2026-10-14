@@ -416,6 +416,12 @@ export default function HRScreeningCallPage() {
                       Question {index + 1} · {question.category}
                     </span>
                     {question.text}
+                    {question.reason && (
+                      <p className="mt-2 text-xs leading-5 text-[#667085]">{question.reason}</p>
+                    )}
+                    {question.follow_ups && question.follow_ups.length > 0 && (
+                      <p className="mt-1 text-xs leading-5 text-[#667085]">Follow up: {question.follow_ups.join(" ")}</p>
+                    )}
                     {question.focus_skills && question.focus_skills.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {question.focus_skills.map((skill) => (
@@ -526,13 +532,16 @@ function AnalysisPanel({ analysis, backHref }: { analysis: ScreeningAnalysis; ba
           ["Skills", analysis.skills_score],
           ["Communication", analysis.communication_score],
           ["Motivation", analysis.motivation_score],
-          ["Availability", analysis.availability_score],
         ].map(([label, score]) => (
           <div key={String(label)}>
             <div className="mb-1 flex justify-between text-xs"><span>{label}</span><strong>{score}%</strong></div>
             <div className="h-1.5 rounded-full bg-[#eaecf0]"><div className="h-full rounded-full bg-primary" style={{ width: `${score}%` }} /></div>
           </div>
         ))}
+        <div className="flex justify-between text-xs">
+          <span>Availability</span>
+          <strong>{analysis.availability_note || (analysis.availability_score == null ? "Not discussed" : `${analysis.availability_score}%`)}</strong>
+        </div>
       </div>
       <p className="mt-5 text-sm leading-6 text-[#475467]">{analysis.summary}</p>
       <p className="mt-3 text-xs text-[#98a2b3]">AI recommendation is decision support only. Final decision remains with HR.</p>

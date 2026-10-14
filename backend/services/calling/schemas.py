@@ -13,6 +13,8 @@ class ScreeningQuestion(BaseModel):
     ]
     reason: str | None = None
     focus_skills: list[str] = Field(default_factory=list)
+    expected_evidence: str | None = None
+    follow_ups: list[str] = Field(default_factory=list)
 
 
 class TranscriptEntryInput(BaseModel):
@@ -72,7 +74,8 @@ class ScreeningAnalysisResult(BaseModel):
     experience_score: int = Field(ge=0, le=100)
     skills_score: int = Field(ge=0, le=100)
     motivation_score: int = Field(ge=0, le=100)
-    availability_score: int = Field(ge=0, le=100)
+    availability_score: int | None = Field(default=None, ge=0, le=100)
+    availability_note: str | None = None
     question_analysis: list[QuestionAnalysis]
     strengths: list[str]
     concerns: list[str]

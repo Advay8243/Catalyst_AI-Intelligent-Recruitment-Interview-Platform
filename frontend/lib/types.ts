@@ -164,6 +164,19 @@ export type ScreeningQuestion = {
   category: "experience" | "skills" | "motivation" | "communication" | "availability";
   reason?: string | null;
   focus_skills?: string[];
+  expected_evidence?: string | null;
+  follow_ups?: string[];
+};
+
+export type AiStatus = {
+  provider: string;
+  model: string | null;
+  embedding_model: string | null;
+  configured: boolean;
+  uses_real_ai: boolean;
+  scoring: string;
+  explanation_source: string;
+  retrieval: string;
 };
 
 export type TranscriptEntry = {
@@ -204,7 +217,8 @@ export type ScreeningAnalysis = {
   experience_score: number;
   skills_score: number;
   motivation_score: number;
-  availability_score: number;
+  availability_score: number | null;
+  availability_note?: string | null;
   question_analysis: Array<{
     question: string;
     answer?: string;
@@ -331,7 +345,7 @@ export type CandidateReview = {
   };
   screening_analysis?: {
     overall_score: number;
-    score_components: Record<string, number>;
+    score_components: Record<string, number | string | null>;
     role_relevance: number;
     question_analysis: Array<{
       question: string;

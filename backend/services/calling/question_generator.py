@@ -192,33 +192,40 @@ class ScreeningQuestionGenerator:
                 reason="Validate required years/type of experience against employment history.",
             )
 
-        add(
-            text=choose([
-                "What interests you about this position and this team’s work?",
-                "Which part of this role do you most want to own, and why?",
-                "What would make this job a strong next step for you?",
-            ]),
-            category="motivation",
-            reason="Assess motivation and role alignment.",
-        )
-        add(
-            text=choose([
-                "How would you communicate a complex technical trade-off to non-engineers?",
-                "Describe a time you had to explain a technical risk to someone outside your team.",
-                "How do you decide what detail to include when updating stakeholders?",
-            ]),
-            category="communication",
-            reason="Assess communication clarity for screening.",
-        )
-        add(
-            text=choose([
-                "What is your availability to start, including any notice period?",
-                "When could you start, and what notice or commitments should we plan around?",
-                "What timeline should we expect between an offer and your start date?",
-            ]),
-            category="availability",
-            reason="Capture scheduling/availability evidence.",
-        )
+        def can_add_hr() -> bool:
+            hr_count = sum(1 for question in questions if question.category in {"motivation", "communication", "availability"})
+            return (hr_count + 1) / (len(questions) + 1) <= 0.15
+
+        if can_add_hr():
+            add(
+                text=choose([
+                    "What interests you about this position and this team’s work?",
+                    "Which part of this role do you most want to own, and why?",
+                    "What would make this job a strong next step for you?",
+                ]),
+                category="motivation",
+                reason="Assess motivation and role alignment.",
+            )
+        if can_add_hr():
+            add(
+                text=choose([
+                    "How would you communicate a complex technical trade-off to non-engineers?",
+                    "Describe a time you had to explain a technical risk to someone outside your team.",
+                    "How do you decide what detail to include when updating stakeholders?",
+                ]),
+                category="communication",
+                reason="Assess communication clarity for screening.",
+            )
+        if can_add_hr():
+            add(
+                text=choose([
+                    "What is your availability to start, including any notice period?",
+                    "When could you start, and what notice or commitments should we plan around?",
+                    "What timeline should we expect between an offer and your start date?",
+                ]),
+                category="availability",
+                reason="Capture scheduling/availability evidence.",
+            )
 
         # Fill to minimum with non-repetitive clarification prompts.
         fillers = [
@@ -250,6 +257,13 @@ class ScreeningQuestionGenerator:
         for options, category, reason in fillers:
             if len(questions) >= min_questions:
                 break
+            if category in {"motivation", "communication", "availability"}:
+                hr_count = sum(
+                    1 for question in questions
+                    if question.category in {"motivation", "communication", "availability"}
+                )
+                if (hr_count + 1) / (len(questions) + 1) > 0.15:
+                    continue
             add(text=choose(options), category=category, reason=reason)
 
         if len(questions) < min_questions:

@@ -7,11 +7,18 @@ class ResumeMatcher:
     @staticmethod
     def _overlap(actual: list[str], expected: list[str]) -> tuple[int, list[str]]:
         if not expected:
-            return 100, ["No explicit requirement"]
-        expected_set = set(map(str.lower, expected))
-        actual_set = set(map(str.lower, actual))
-        matches = sorted(actual_set & expected_set)
-        return round(100 * len(matches) / len(expected_set)), matches
+            return 100, []
+        expected_by_key = {item.casefold(): item for item in expected}
+        actual_keys = {item.casefold() for item in actual}
+        matches = sorted(
+            (
+                original
+                for key, original in expected_by_key.items()
+                if key in actual_keys
+            ),
+            key=str.casefold,
+        )
+        return round(100 * len(matches) / len(expected_by_key)), matches
 
     @staticmethod
     def _missing(actual: list[str], expected: list[str]) -> list[str]:
