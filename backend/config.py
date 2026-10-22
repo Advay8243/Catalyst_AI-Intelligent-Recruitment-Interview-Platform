@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
 
-    app_name: str = "Catalyst AI"
+    app_name: str = "TalentLens"
     environment: str = "development"
     database_url: str
     cors_origins: Annotated[list[str], NoDecode] = Field(

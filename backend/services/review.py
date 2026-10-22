@@ -379,7 +379,7 @@ class CandidateReviewService:
                 "Please reply with your availability, and our recruiting team will coordinate "
                 "the details.\n\n"
                 f"Recruiter contact: {actor}\n\n"
-                "Best,\nCatalyst AI Recruiting"
+                "Best,\nTalentLens Recruiting"
             )
             draft_recipient = target_recipient
         elif email_type == "rejected":
@@ -391,7 +391,7 @@ class CandidateReviewService:
                 "After careful consideration, we have decided not to progress your application "
                 "further at this time. We appreciate the opportunity to learn about your "
                 "experience and wish you every success in your search.\n\n"
-                "Best,\nCatalyst AI Recruiting"
+                "Best,\nTalentLens Recruiting"
             )
             draft_recipient = target_recipient
         else:

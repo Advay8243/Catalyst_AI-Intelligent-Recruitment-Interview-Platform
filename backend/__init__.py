@@ -1,1 +1,1 @@
-"""Catalyst AI backend package."""
+"""TalentLens backend package."""

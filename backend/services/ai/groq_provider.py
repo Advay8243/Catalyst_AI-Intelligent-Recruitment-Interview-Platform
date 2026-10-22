@@ -7,12 +7,11 @@ from typing import Annotated, Any
 from pydantic import BaseModel, BeforeValidator, Field
 
 from backend.config import Settings
-from backend.schemas import JDRequirements, MatchResult, ParsedResume
+from backend.schemas import JDRequirements, MatchResult, ParsedResume, ScoreCategory
 from backend.services.ai.ai_provider import AIProvider
 from backend.services.ai.embeddings import EmbeddingService
 from backend.services.ai.errors import AIProviderError
 from backend.services.ai.groq_client import GroqClient
-from backend.services.ai.resume_matcher import ResumeMatcher
 from backend.services.calling.schemas import (
     QuestionAnalysis,
     ScreeningAnalysisResult,
@@ -137,11 +136,26 @@ class _LLMJob(BaseModel):
     summary_bullets: StrList = Field(default_factory=list)
 
 
-class _LLMFit(BaseModel):
+class _LLMScore(BaseModel):
+    overall_score: LooseInt = 0
+    skills_score: LooseInt = 0
+    experience_score: LooseInt = 0
+    education_score: LooseInt = 0
+    industry_score: LooseInt = 0
+    responsibilities_score: LooseInt = 0
+    required_skill_score: LooseInt = 0
+    preferred_skill_score: LooseInt = 0
+    education_certification_score: LooseInt = 0
+    matched_skills: StrList = Field(default_factory=list)
+    missing_skills: StrList = Field(default_factory=list)
+    skills_evidence: StrList = Field(default_factory=list)
+    experience_evidence: StrList = Field(default_factory=list)
+    education_evidence: StrList = Field(default_factory=list)
+    industry_evidence: StrList = Field(default_factory=list)
+    responsibilities_evidence: StrList = Field(default_factory=list)
     fit_points: StrList = Field(default_factory=list)
     gap_points: StrList = Field(default_factory=list)
-    matched_required_skills: StrList = Field(default_factory=list)
-    matched_preferred_skills: StrList = Field(default_factory=list)
+    explanation: PlainStr = ""
 
 
 class _LLMQuestion(BaseModel):
@@ -186,12 +200,11 @@ class _LLMScreening(BaseModel):
 
 
 class GroqAIProvider(AIProvider):
-    """Groq text generation with the existing weighted resume score."""
+    """Groq text generation. Resume scores come from the model, not a formula."""
 
     def __init__(self, settings: Settings, client: GroqClient | None = None) -> None:
         self.settings = settings
         self.client = client or GroqClient(settings)
-        self.matcher = ResumeMatcher()
         self.embeddings = EmbeddingService(settings)
 
     def generate_embedding(self, text: str) -> list[float]:
@@ -275,67 +288,107 @@ class GroqAIProvider(AIProvider):
     def match_resume(
         self, resume: ParsedResume, requirements: JDRequirements, weights: dict[str, int]
     ) -> MatchResult:
-        narrative = self.client.complete_json(
-            operation="match_skills_and_explanation",
-            system_prompt=(
-                "Reconcile resume skills with job skills semantically and write evidence-based "
-                "fit and gap points as JSON. Treat abbreviations, aliases, and directly equivalent "
-                "technologies as matches (for example PySpark evidences Apache Spark/PySpark). "
-                "Do not treat merely related technologies as equivalent. "
-                "matched_required_skills and matched_preferred_skills must contain the exact "
-                "wording of skills from the corresponding job lists, and only when the resume "
-                "provides evidence. Do not calculate a numeric score. "
-                f"{UNTRUSTED_DOCUMENT_RULE}"
-            ),
-            user_prompt=(
-                "Return JSON with fit_points, gap_points, matched_required_skills, "
-                "and matched_preferred_skills. Use exact job-skill strings in the matched lists.\n"
-                f"Job: {requirements.model_dump()}\nResume: {resume.model_dump()}"
-            ),
-            schema=_LLMFit,
-            temperature=0.2,
+        system_prompt = (
+            "Score this parsed resume against the job description using only the supplied evidence. "
+            "Judge skills, experience, qualifications, responsibilities, and missing requirements. "
+            "Treat abbreviations and equivalent technologies as matches, such as PySpark for Apache Spark. "
+            "Do not use keyword counting. Return every score as an integer from 0 to 100. "
+            "Use the full range, such as 58 or 73. Scores of only 1 through 5 are invalid. "
+            "matched_skills and missing_skills must use the exact wording from the job's skill lists. "
+            "fit_points explain why the candidate fits. gap_points explain why the candidate does not fit. "
+            f"{UNTRUSTED_DOCUMENT_RULE}"
         )
-        matched_required = _validated_skill_matches(
-            narrative.matched_required_skills, requirements.required_skills
+        user_prompt = (
+            "Return JSON with overall_score, skills_score, experience_score, education_score, "
+            "industry_score, responsibilities_score, required_skill_score, preferred_skill_score, "
+            "education_certification_score, matched_skills, missing_skills, skills_evidence, "
+            "experience_evidence, education_evidence, industry_evidence, responsibilities_evidence, "
+            "fit_points, gap_points, and explanation.\n"
+            f"Job description profile: {requirements.model_dump()}\n"
+            f"Parsed resume: {resume.model_dump()}"
         )
-        matched_preferred = _validated_skill_matches(
-            narrative.matched_preferred_skills, requirements.preferred_skills
-        )
-        # The weighted formula remains authoritative; Groq supplies semantic
-        # equivalences that exact string matching cannot discover.
-        augmented_resume = resume.model_copy(
-            update={
-                "skills": list(
-                    dict.fromkeys(
-                        [*resume.skills, *matched_required, *matched_preferred]
-                    )
+        attempts = max(1, self.settings.ai_max_retries + 1)
+        scale_error: AIProviderError | None = None
+        scored: _LLMScore | None = None
+        for _attempt in range(1, attempts + 1):
+            correction = ""
+            if scale_error is not None:
+                correction = (
+                    "\nThe previous scores were rejected because they were not integers from 0 to 100. "
+                    "Score the resume against the job again on that scale."
                 )
-            }
-        )
-        scored = self.matcher.match(augmented_resume, requirements, weights)
-        fit_points = _clean(narrative.fit_points)
-        gap_points = _clean(narrative.gap_points)
+            scored = self.client.complete_json(
+                operation="match_resume",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt + correction,
+                schema=_LLMScore,
+                temperature=0.2,
+            )
+            try:
+                _require_hundred_point_values([
+                    scored.overall_score,
+                    scored.skills_score,
+                    scored.experience_score,
+                    scored.education_score,
+                    scored.industry_score,
+                    scored.responsibilities_score,
+                    scored.required_skill_score,
+                    scored.preferred_skill_score,
+                    scored.education_certification_score,
+                ])
+                scale_error = None
+                break
+            except AIProviderError as exc:
+                scale_error = exc
+        if scale_error is not None or scored is None:
+            raise scale_error or AIProviderError(
+                "Groq did not return a resume score.",
+                operation="match_resume",
+                retryable=True,
+            )
+        fit_points = _clean(scored.fit_points)
+        gap_points = _clean(scored.gap_points)
         if not fit_points and not gap_points:
             raise AIProviderError(
                 "Groq did not return fit or gap points.",
-                operation="match_explanation",
+                operation="match_resume",
                 retryable=True,
             )
-        parts = []
-        if fit_points:
-            parts.append("Fits: " + "; ".join(fit_points))
-        if gap_points:
-            parts.append("Gaps: " + "; ".join(gap_points))
-        explanation = (
-            f"Overall score {scored.overall_score}/100 uses the weighted formula. "
-            "Groq wrote the fit explanation. " + " | ".join(parts)
-        )
-        return scored.model_copy(
-            update={
-                "explanation": explanation[:4000],
-                "fit_points": fit_points,
-                "gap_points": gap_points,
-            }
+        if not scored.explanation.strip():
+            raise AIProviderError(
+                "Groq did not return a resume-score explanation.",
+                operation="match_resume",
+                retryable=True,
+            )
+        job_skills = [*requirements.required_skills, *requirements.preferred_skills]
+        matched_skills = _validated_skill_matches(scored.matched_skills, job_skills)
+        matched_keys = {skill.casefold() for skill in matched_skills}
+        missing_skills = [
+            skill for skill in _validated_skill_matches(scored.missing_skills, job_skills)
+            if skill.casefold() not in matched_keys
+        ]
+        overall = _bounded_score(scored.overall_score)
+        return MatchResult(
+            overall_score=overall,
+            categories={
+                "skills": _score_category(scored.skills_score, weights["skills"], scored.skills_evidence),
+                "experience": _score_category(scored.experience_score, weights["experience"], scored.experience_evidence),
+                "education": _score_category(scored.education_score, weights["education"], scored.education_evidence),
+                "industry": _score_category(scored.industry_score, weights["industry"], scored.industry_evidence),
+                "other": _score_category(scored.responsibilities_score, weights["other"], scored.responsibilities_evidence),
+            },
+            explanation=(
+                f"Overall score {overall}/100 is generated by Groq from the parsed resume and job description. "
+                + scored.explanation.strip()
+            )[:4000],
+            matched_skills=matched_skills,
+            missing_skills=missing_skills,
+            required_skill_score=_bounded_score(scored.required_skill_score),
+            preferred_skill_score=_bounded_score(scored.preferred_skill_score),
+            responsibilities_score=_bounded_score(scored.responsibilities_score),
+            education_certification_score=_bounded_score(scored.education_certification_score),
+            fit_points=fit_points,
+            gap_points=gap_points,
         )
 
     def generate_screening_questions(
@@ -568,6 +621,33 @@ def _validated_skill_matches(suggested: list[str], expected: list[str]) -> list[
         if canonical and canonical not in matched:
             matched.append(canonical)
     return matched
+
+
+def _bounded_score(value: int) -> int:
+    return max(0, min(int(value), 100))
+
+
+def _require_hundred_point_values(values: list[int]) -> None:
+    if values and any(value > 0 for value in values) and max(values) <= 5:
+        raise AIProviderError(
+            "Groq returned resume scores on a 1-5 scale. Scores must be integers from 0 to 100.",
+            operation="match_resume",
+            retryable=True,
+        )
+
+
+def _score_category(score: int, weight: int, evidence: list[str]) -> ScoreCategory:
+    bounded = _bounded_score(score)
+    cited = _clean(evidence)
+    return ScoreCategory(
+        score=bounded,
+        weight=weight,
+        evidence=cited,
+        explanation=(
+            f"Groq score {bounded}/100 based on: "
+            + (", ".join(cited) if cited else "the supplied resume and job evidence")
+        ),
+    )
 
 
 def _hundred_point_scores(

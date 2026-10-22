@@ -430,7 +430,7 @@ def provider_status(settings: Settings) -> dict[str, Any]:
         model = settings.groq_model
         embedding_model = "local-hash-256"
         retrieval = "local-hash"
-        scoring = "weighted-formula"
+        scoring = "groq" if uses_groq else "unavailable"
         explanation = "groq" if uses_groq else "unavailable"
     elif provider == "openai":
         model = settings.ai_model
