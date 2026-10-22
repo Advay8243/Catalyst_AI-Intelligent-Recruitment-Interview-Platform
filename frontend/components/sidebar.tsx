@@ -42,7 +42,7 @@ export function Sidebar() {
         <div className="flex h-[68px] items-center justify-between border-b px-4">
           <Link href="/screening" className="flex items-center gap-3">
             <BrandMark />
-            <span><span className="block text-base font-bold leading-none text-[#22233a]">Catalyst AI</span><span className="mt-1 block text-[9px] font-semibold uppercase tracking-[.16em] text-[#9897a7]">Talent Intelligence</span></span>
+            <span><span className="block text-base font-bold leading-none text-[#22233a]">TalentLens</span></span>
           </Link>
           <button className="text-[#98a2b3] lg:hidden" onClick={() => setOpen(false)} aria-label="Close navigation"><X className="size-5" /></button>
         </div>

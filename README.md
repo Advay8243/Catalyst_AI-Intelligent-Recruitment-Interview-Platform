@@ -1,8 +1,8 @@
-# Catalyst AI
+# TalentLens
 
-Catalyst AI is a recruitment operations application. This first module covers job-description ingestion, PDF/DOCX resume ingestion, transparent JD-to-resume matching, unified candidate screening, HR-call navigation, and an email-composer shell. Online assessments, real calling/email delivery, and technical interviews are intentionally out of scope.
+TalentLens is a recruitment operations application. This first module covers job-description ingestion, PDF/DOCX resume ingestion, transparent JD-to-resume matching, unified candidate screening, HR-call navigation, and an email-composer shell. Online assessments, real calling/email delivery, and technical interviews are intentionally out of scope.
 
-The application runs without external AI credentials by using a deterministic `MockAIProvider`. Set `AI_PROVIDER=groq` with a backend `GROQ_API_KEY` to use Groq for parsing, fit explanations, interview questions, and transcript analysis. Resume scores stay on the weighted formula. Groq does not provide embeddings, so semantic search uses local hash vectors.
+The application runs without external AI credentials by using a deterministic `MockAIProvider`. Set `AI_PROVIDER=groq` with a backend `GROQ_API_KEY` to use Groq for parsing, resume scoring, fit explanations, interview questions, and transcript analysis. Groq does not provide embeddings, so semantic search uses local hash vectors.
 
 The HR screening module provides a full mock-provider workflow at
 `/screening/call/{candidate_id}`: call lifecycle, live transcript capture,
@@ -197,7 +197,7 @@ Restart the backend after changing `.env`. `GET /ai/status` reports the active p
 
 `AI_PROVIDER=mock` uses local rules for parsing, question wording, transcript scoring, and hash-based vectors. The Candidate Screening page labels this mode as rule-based. Mock output is not labeled as Gemini output.
 
-`AI_PROVIDER=groq` calls the Groq API for resume and job extraction, fit and gap explanations, screening questions, and transcript analysis. The resume number still comes from the weighted formula. Groq has no embedding API, so search uses local 256-dimension hash vectors and reports retrieval as `local-hash`. Invalid keys, unavailable models, rate limits, and malformed responses are returned as errors and are not replaced with mock text. The default model is `openai/gpt-oss-120b`.
+`AI_PROVIDER=groq` calls the Groq API for resume and job extraction, the numerical resume score, fit and gap points, screening questions, and transcript analysis. Groq has no embedding API, so search uses local 256-dimension hash vectors and reports retrieval as `local-hash`. Invalid keys, unavailable models, rate limits, and malformed responses are returned as errors and are not replaced with mock text. The default model is `openai/gpt-oss-120b`.
 
 `AI_PROVIDER=gemini` calls the Gemini API for:
 

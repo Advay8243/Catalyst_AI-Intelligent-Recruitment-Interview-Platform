@@ -3,7 +3,7 @@ import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
 
 export const metadata: Metadata = {
-  title: "Catalyst AI | Candidate Screening",
+  title: "TalentLens | Candidate Screening",
   description: "AI-assisted talent screening workspace",
 };
 

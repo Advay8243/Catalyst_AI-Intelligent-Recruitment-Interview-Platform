@@ -37,8 +37,8 @@ export function EmailComposer({
   useEffect(() => {
     if (!candidate) return;
     setRecipient(candidate.email);
-    setSubject(`Next steps for ${candidate.jobTitle ?? "your application"} at Catalyst AI`);
-    setMessage(`Hi ${candidate.name.split(" ")[0]},\n\nThank you for your interest in ${candidate.jobTitle ?? "the role"}. We would like to invite you to the next stage of our process.\n\nPlease reply with your availability, and our recruiting team will coordinate the details.\n\nBest,\nCatalyst AI Recruiting`);
+    setSubject(`Next steps for ${candidate.jobTitle ?? "your application"} at TalentLens`);
+    setMessage(`Hi ${candidate.name.split(" ")[0]},\n\nThank you for your interest in ${candidate.jobTitle ?? "the role"}. We would like to invite you to the next stage of our process.\n\nPlease reply with your availability, and our recruiting team will coordinate the details.\n\nBest,\nTalentLens Recruiting`);
     setInterviewer("");
     setPreviewing(false);
     setError("");
